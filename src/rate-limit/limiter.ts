@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Redis } from "ioredis";
 import { normalizeLogger, type Logger } from "../logger.js";
 import type { RateLimiterOptions, RateLimitDecision, RateLimitAlgorithm } from "./types.js";
@@ -105,7 +104,7 @@ export class RateLimiter {
 
   private async fixedWindow(resource: string, cost: number, mode: "consume" | "check"): Promise<RateLimitDecision> {
     const key = this.key(resource);
-    const raw = (await runLua(this.redis, FIXED_CONSUMER_LUA, [key], [this.opts.intervalMs, this.opts.limit, cost, mode])) as any[];
+    const raw = (await runLua(this.redis, FIXED_CONSUMER_LUA, [key], [this.opts.intervalMs, this.opts.limit, cost, mode])) as unknown[];
     if (!Array.isArray(raw)) throw new Error("Unexpected Lua result");
     const allowed = Number(raw[0]) === 1;
     const current = Number(raw[1]);
@@ -131,7 +130,7 @@ export class RateLimiter {
   private async slidingWindow(resource: string, cost: number, mode: "consume" | "check"): Promise<RateLimitDecision> {
     const key = this.key(resource);
     const uniq = randomUniq();
-    const raw = (await runLua(this.redis, SLIDING_CONSUMER_LUA, [key], [this.opts.intervalMs, this.opts.limit, cost, mode, uniq])) as any[];
+    const raw = (await runLua(this.redis, SLIDING_CONSUMER_LUA, [key], [this.opts.intervalMs, this.opts.limit, cost, mode, uniq])) as unknown[];
     if (!Array.isArray(raw)) throw new Error("Unexpected Lua result");
     const allowed = Number(raw[0]) === 1;
     const total = Number(raw[1]);
@@ -159,7 +158,7 @@ export class RateLimiter {
   private async tokenBucket(resource: string, cost: number, mode: "consume" | "check", cap: number, refillPerSec: number, initial: number): Promise<RateLimitDecision> {
     const key = this.key(resource);
     const refillPerMs = refillPerSec / 1000;
-    const raw = (await runLua(this.redis, TOKEN_BUCKET_LUA, [key], [cap, refillPerMs, cost, mode, initial])) as any[];
+    const raw = (await runLua(this.redis, TOKEN_BUCKET_LUA, [key], [cap, refillPerMs, cost, mode, initial])) as unknown[];
     if (!Array.isArray(raw)) throw new Error("Unexpected Lua result");
     const allowed = Number(raw[0]) === 1;
     const remaining = Number(raw[1]);
@@ -184,7 +183,7 @@ export class RateLimiter {
   private async leakyBucket(resource: string, cost: number, mode: "consume" | "check", cap: number, leakPerSec: number): Promise<RateLimitDecision> {
     const key = this.key(resource);
     const leakPerMs = leakPerSec / 1000;
-    const raw = (await runLua(this.redis, LEAKY_BUCKET_LUA, [key], [cap, leakPerMs, cost, mode])) as any[];
+    const raw = (await runLua(this.redis, LEAKY_BUCKET_LUA, [key], [cap, leakPerMs, cost, mode])) as unknown[];
     if (!Array.isArray(raw)) throw new Error("Unexpected Lua result");
     const allowed = Number(raw[0]) === 1;
     const remaining = Number(raw[1]);

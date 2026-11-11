@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import type { Logger } from "../logger.js";
 import { createCoordinationKeyBuilder, resolveCoordinationConfig } from "./utils.js";
@@ -21,6 +20,7 @@ import type {
   SemaphoreStatus,
   SemaphoreReleaseResult,
 } from "./types.js";
+import type { CoordinationClientConfig } from "./types.js";
 
 const ACQUIRE_LUA = `
 local key = KEYS[1]
@@ -102,7 +102,7 @@ function createSemaphoreManagerImpl(opts: CreateSemaphoreManagerOptions): Semaph
     validateLeaseDuration(leaseMs);
     const key = keyBuilder.semaphore(resource);
     const fencingKey = keyBuilder.semaphoreFencing(resource);
-    const res = (await (client as any).eval(ACQUIRE_LUA, 2, key, fencingKey, permits, leaseMs, token)) as any[];
+    const res = (await client.eval(ACQUIRE_LUA, 2, key, fencingKey, permits, leaseMs, token)) as unknown[];
     if (!Array.isArray(res)) return { acquired: false, error: "Unexpected result" };
     if (res[0] === 0 || res[0] === false) {
       const count = Number(res[1] ?? 0);
@@ -152,7 +152,7 @@ function createSemaphoreManagerImpl(opts: CreateSemaphoreManagerOptions): Semaph
       validateLeaseDuration(o.leaseMs);
       validateToken(o.token);
       const key = keyBuilder.semaphore(o.resource);
-      const res = (await (client as any).eval(RENEW_LUA, 1, key, o.token, o.leaseMs)) as any[];
+      const res = (await client.eval(RENEW_LUA, 1, key, o.token, o.leaseMs)) as unknown[];
       if (!Array.isArray(res) || res[0] === 0) {
         return { renewed: false, error: String(res?.[1] ?? "failed") };
       }
@@ -162,7 +162,7 @@ function createSemaphoreManagerImpl(opts: CreateSemaphoreManagerOptions): Semaph
       validateResource(o.resource);
       validateToken(o.token);
       const key = keyBuilder.semaphore(o.resource);
-      const res = (await (client as any).eval(RELEASE_LUA, 1, key, o.token)) as any[];
+      const res = (await client.eval(RELEASE_LUA, 1, key, o.token)) as unknown[];
       const removed = Number(res?.[0] ?? 0) === 1;
       // count
       // cleanup expired not strictly; return available unknown? query zcard
@@ -178,7 +178,7 @@ function createSemaphoreManagerImpl(opts: CreateSemaphoreManagerOptions): Semaph
       // remove expired via Lua? Use client zremrangebyscore
       await client.zremrangebyscore(key, "-inf", now).catch(() => {});
       const members = await client.zrange(key, 0, -1, "WITHSCORES");
-      const holders: any[] = [];
+      const holders: Array<{ token: string; expiresAt: number }> = [];
       for (let i = 0; i < members.length; i += 2) {
         holders.push({ token: members[i], expiresAt: Number(members[i + 1]) });
       }
@@ -193,9 +193,13 @@ function createSemaphoreManagerImpl(opts: CreateSemaphoreManagerOptions): Semaph
   return manager;
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createSemaphoreManager(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createSemaphoreManager(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createSemaphoreManagerImpl({
     client: resolved.client,

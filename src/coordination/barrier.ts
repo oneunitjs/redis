@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import { createCoordinationKeyBuilder, resolveCoordinationConfig } from "./utils.js";
 import { validateResource, validateRequiredCount, validateParticipantId, validateTimeout, validateGeneration, sleep } from "./utils.js";
@@ -8,6 +7,7 @@ import type {
   BarrierArrivalOptions,
   BarrierStatus,
 } from "./types.js";
+import type { CoordinationClientConfig } from "./types.js";
 
 const ARRIVE_LUA = `
 local key = KEYS[1]
@@ -81,7 +81,7 @@ function createBarrierCoordinatorImpl(opts: CreateBarrierCoordinatorOptions): Ba
       const key = `${keyBuilder.barrier(o.barrierId)}:gen:${generation}`;
       const deadline = performance.now() + timeoutMs;
       // first call registers arrival
-      let res = (await (client as any).eval(ARRIVE_LUA, 1, key, requiredCount, generation, o.participantId, timeoutMs)) as any[];
+      let res = (await client.eval(ARRIVE_LUA, 1, key, requiredCount, generation, o.participantId, timeoutMs)) as unknown[];
       if (!Array.isArray(res)) throw new Error("Unexpected result");
       if (res[1] === "generation_mismatch") {
         throw new Error(`Generation mismatch: expected ${generation}, got ${res[2]}`);
@@ -151,9 +151,13 @@ function createBarrierCoordinatorImpl(opts: CreateBarrierCoordinatorOptions): Ba
   };
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createBarrierCoordinator(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createBarrierCoordinator(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createBarrierCoordinatorImpl({
     client: resolved.client,

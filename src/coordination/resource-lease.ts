@@ -1,7 +1,7 @@
-import { resolveCoordinationConfig } from "./utils.js";
-/* eslint-disable */
+import { Redis } from "ioredis";
 import { createLeaseManager } from "./lease.js";
 import type { CreateLeaseManagerOptions } from "./lease.js";
+import { resolveCoordinationConfig } from "./utils.js";
 import type {
   LeaseResult,
   LeaseAcquireOptions,
@@ -9,6 +9,13 @@ import type {
   LeaseReleaseOptions,
   LeaseStatus,
 } from "./types.js";
+import type {
+  LockAcquireResult,
+  LockRenewResult,
+  LockReleaseResult,
+  LockStatus,
+} from "./types.js";
+import type { CoordinationClientConfig } from "./types.js";
 
 export interface ResourceLeaseManager {
   acquire(opts: LeaseAcquireOptions): Promise<LeaseResult>;
@@ -26,14 +33,14 @@ function createResourceLeaseManagerImpl(opts: CreateResourceLeaseManagerOptions)
   });
   return {
     async acquire(o: LeaseAcquireOptions): Promise<LeaseResult> {
-      const r: any = await base.acquire({
+      const r: LockAcquireResult = await base.acquire({
         resource: o.resource,
         leaseMs: o.leaseMs,
         timeoutMs: o.timeoutMs,
         retryIntervalMs: o.retryIntervalMs,
         signal: o.signal,
         ownerId: o.holderId,
-      } as any);
+      });
       if (!r.acquired) {
         return { acquired: false, error: r.error ?? "not acquired" };
       }
@@ -46,15 +53,15 @@ function createResourceLeaseManagerImpl(opts: CreateResourceLeaseManagerOptions)
       };
     },
     async renew(o: LeaseRenewOptions) {
-      const r: any = await base.renew({ resource: o.resource, token: o.token, leaseMs: o.leaseMs } as any);
+      const r: LockRenewResult = await base.renew({ resource: o.resource, token: o.token, leaseMs: o.leaseMs });
       return { renewed: r.renewed, error: r.error, ttlMs: r.ttlMs };
     },
     async release(o: LeaseReleaseOptions) {
-      const r: any = await base.release({ resource: o.resource, token: o.token } as any);
+      const r: LockReleaseResult = await base.release({ resource: o.resource, token: o.token });
       return { released: r.released, error: r.error };
     },
     async getStatus(resource: string): Promise<LeaseStatus> {
-      const st: any = await base.getStatus(resource);
+      const st: LockStatus = await base.getStatus(resource);
       const now = Date.now();
       return {
         resource,
@@ -67,9 +74,13 @@ function createResourceLeaseManagerImpl(opts: CreateResourceLeaseManagerOptions)
   };
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createResourceLeaseManager(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createResourceLeaseManager(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createResourceLeaseManagerImpl({
     client: resolved.client,

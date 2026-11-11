@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import { createCoordinationKeyBuilder, resolveCoordinationConfig } from "./utils.js";
 import { generateOwnershipToken, validateResource, validateLeaseDuration, validateTimeout, validateRetryInterval, sleep, validateToken } from "./utils.js";
@@ -10,6 +9,7 @@ import type {
   JobReleaseOptions,
   JobClaimStatus,
 } from "./types.js";
+import type { CoordinationClientConfig } from "./types.js";
 
 const CLAIM_LUA = `
 local key = KEYS[1]
@@ -115,7 +115,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
         if (o.signal?.aborted) {
           return { claimed: false, error: "cancelled", status: "failed" };
         }
-        const res = (await (client as any).eval(CLAIM_LUA, 1, key, actualToken, o.leaseMs, claimantId)) as any[];
+        const res = (await client.eval(CLAIM_LUA, 1, key, actualToken, o.leaseMs, claimantId)) as unknown[];
         if (!Array.isArray(res)) {
           throw new Error("Unexpected result");
         }
@@ -140,7 +140,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
       validateToken(o.token);
       validateLeaseDuration(o.leaseMs);
       const key = keyBuilder.jobClaim(o.jobId);
-      const res = (await (client as any).eval(RENEW_LUA, 1, key, o.token, o.leaseMs)) as any[];
+      const res = (await client.eval(RENEW_LUA, 1, key, o.token, o.leaseMs)) as unknown[];
       if (!Array.isArray(res) || res[0] === 0) {
         return { renewed: false, error: String(res?.[1] ?? "failed") };
       }
@@ -150,7 +150,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
       validateResource(o.jobId);
       validateToken(o.token);
       const key = keyBuilder.jobClaim(o.jobId);
-      const res = (await (client as any).eval(RELEASE_LUA, 1, key, o.token)) as any[];
+      const res = (await client.eval(RELEASE_LUA, 1, key, o.token)) as unknown[];
       if (!Array.isArray(res) || res[0] === 0) {
         return { released: false, error: "ownership mismatch" };
       }
@@ -161,7 +161,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
       validateToken(o.token);
       const key = keyBuilder.jobClaim(o.jobId);
       const resultStr = o.result === undefined ? "" : JSON.stringify(o.result);
-      const res = (await (client as any).eval(COMPLETE_LUA, 1, key, o.token, resultStr)) as any[];
+      const res = (await client.eval(COMPLETE_LUA, 1, key, o.token, resultStr)) as unknown[];
       if (!Array.isArray(res) || res[0] === 0) {
         return { completed: false, error: "ownership lost" };
       }
@@ -171,7 +171,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
       validateResource(o.jobId);
       validateToken(o.token);
       const key = keyBuilder.jobClaim(o.jobId);
-      await (client as any).eval(
+      await client.eval(
         `redis.call('HSET', KEYS[1], 'status', 'failed', 'error', ARGV[2]); redis.call('PEXPIRE', KEYS[1], 3600000); return 1`,
         1,
         key,
@@ -189,7 +189,7 @@ function createJobClaimManagerImpl(opts: CreateJobClaimManagerOptions): JobClaim
       }
       const now = Date.now();
       const expiresAt = raw.expires ? Number(raw.expires) : undefined;
-      let status: JobClaimStatus["status"] = (raw.status as any) ?? "unclaimed";
+      let status: JobClaimStatus["status"] = (raw.status ?? "unclaimed") as JobClaimStatus["status"];
       if (status === "claimed" && expiresAt && expiresAt <= now) status = "expired";
       return {
         jobId,
@@ -210,9 +210,13 @@ function safeParse(v: string): unknown {
   try { return JSON.parse(v); } catch { return v; }
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createJobClaimManager(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createJobClaimManager(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createJobClaimManagerImpl({
     client: resolved.client,

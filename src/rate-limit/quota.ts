@@ -3,6 +3,7 @@ import { Redis } from "ioredis";
 import { rateLimitKey } from "./internal/keys.js";
 import { validatePositiveFinite } from "./internal/validation.js";
 import { nextDailyBoundaryUtcMs, nextMonthlyBoundaryUtcMs } from "./internal/time.js";
+import type { Logger } from "../logger.js";
 
 export interface QuotaDecision {
   allowed: boolean;
@@ -26,7 +27,7 @@ export interface QuotaConfig {
   weight?: number;
   keyPrefix?: string;
   failurePolicy?: "fail-open" | "fail-closed";
-  logger?: any;
+  logger?: Logger;
 }
 
 const QUOTA_LUA = `
@@ -79,7 +80,7 @@ export class Quota {
     const key = this.key(resource);
     const failOpen = this.config.failurePolicy === "fail-open";
     try {
-      const raw = await (this.redis as any).eval(QUOTA_LUA, 1, key, this.config.quota, amount * w, ttlMs);
+      const raw = await this.redis.eval(QUOTA_LUA, 1, key, this.config.quota, amount * w, ttlMs);
       // fallback if eval not available (should not happen)
       if (!Array.isArray(raw)) throw new Error("Unexpected quota result");
       const allowed = Number(raw[0]) === 1;

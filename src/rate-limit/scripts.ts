@@ -1,8 +1,7 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 
 export async function runLua(client: Redis, script: string, keys: string[], args: Array<string | number>): Promise<unknown> {
-  return (client as any).eval(script, keys.length, ...keys, ...args.map((a) => String(a)));
+  return client.eval(script, keys.length, ...keys, ...args.map((a) => String(a)));
 }
 
 export const FIXED_CONSUMER_LUA = `

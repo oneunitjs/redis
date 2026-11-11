@@ -1,7 +1,7 @@
-/* eslint-disable */
 import { generateOwnerId } from "./utils.js";
 import { LeaderElectionCoordinator } from "./leader-election.js";
 import type { CoordinationClientConfig } from "./types.js";
+import type { LeaderElectionEvent } from "./types.js";
 import { createCoordinationClient } from "./client.js";
 
 export interface SingletonSchedulerOptions {
@@ -32,7 +32,7 @@ export class SingletonScheduler {
       resource: this.options.resource,
       leaseMs: this.options.leaseMs,
       candidateId,
-      onEvent: (e: any) => {
+      onEvent: (e: LeaderElectionEvent) => {
         if (e.type === "leader-acquired") {
           this.startLocalLoop();
           this.options.onLeadershipChange?.(true);
@@ -58,7 +58,7 @@ export class SingletonScheduler {
         }
       })();
     }, this.options.intervalMs);
-    (this.timer as any)?.unref?.();
+    (this.timer as NodeJS.Timeout)?.unref?.();
   }
 
   private stopLocalLoop() {

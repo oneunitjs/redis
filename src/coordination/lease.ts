@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import type { Logger } from "../logger.js";
 import { createCoordinationKeyBuilder } from "./utils.js";
@@ -31,7 +30,6 @@ import type {
   LockRenewResult,
   LockReleaseResult,
 } from "./types.js";
-// avoid duplicate import confusion
 
 const ACQUIRE_LUA = `
 local now = tonumber(redis.call('TIME')[1]) * 1000 + math.floor(tonumber(redis.call('TIME')[2]) / 1000)
@@ -106,7 +104,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
   const keyFn = opts.keyFn ?? ((resource: string) => keyBuilder.lock(resource));
 
   async function luaAcquire(key: string, token: string, leaseMs: number): Promise<LockAcquireResult> {
-    const res = await (client as any).eval(ACQUIRE_LUA, 1, key, token, leaseMs) as any[];
+    const res = (await client.eval(ACQUIRE_LUA, 1, key, token, leaseMs)) as unknown[];
     if (!Array.isArray(res)) {
       return { acquired: false, error: "Unexpected Lua result" };
     }
@@ -145,7 +143,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
       }
       const result = await luaAcquire(key, token, opts2.leaseMs);
       if (opts2.signal?.aborted && result.acquired) {
-        await (client as any).eval(RELEASE_LUA, 1, key, token).catch(() => {});
+        await client.eval(RELEASE_LUA, 1, key, token).catch(() => {});
         throw new CoordinationCancelledError("Acquisition cancelled", resource);
       }
       if (result.acquired) return result;
@@ -158,7 +156,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
         const st = await getStatusNoThrow(resource);
         if (st.exists && st.owner === token) {
           // release silently
-          await (client as any).eval(RELEASE_LUA, 1, key, token).catch(() => {});
+          await client.eval(RELEASE_LUA, 1, key, token).catch(() => {});
           throw new CoordinationCancelledError("Acquisition cancelled", resource);
         }
         throw new CoordinationCancelledError("Acquisition cancelled", resource);
@@ -178,7 +176,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
   async function getStatus(resource: string): Promise<LockStatus> {
     validateResource(resource);
     const key = keyFn(resource);
-    const res = (await (client as any).eval(STATUS_LUA, 1, key)) as any[];
+    const res = (await client.eval(STATUS_LUA, 1, key)) as unknown[];
     const token = res[0] === null ? undefined : (res[0] ? String(res[0]) : undefined);
     const expires = res[1] ? Number(res[1]) : undefined;
     const fencing = res[2] ? Number(res[2]) : undefined;
@@ -221,7 +219,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
       validateLeaseDuration(opts.leaseMs);
       validateToken(opts.token);
       const key = keyFn(opts.resource);
-      const res = (await (client as any).eval(RENEW_LUA, 1, key, opts.token, opts.leaseMs)) as any[];
+      const res = (await client.eval(RENEW_LUA, 1, key, opts.token, opts.leaseMs)) as unknown[];
       if (!Array.isArray(res) || res[0] === 0 || res[0] === false) {
         const reason = String(res?.[1] ?? "unknown");
         let r: "expired" | "ownership_lost" | "timeout" | "unknown" = "unknown";
@@ -235,7 +233,7 @@ export function createLeaseManager(opts: CreateLeaseManagerOptions): LeaseManage
       validateResource(opts.resource);
       validateToken(opts.token);
       const key = keyFn(opts.resource);
-      const res = (await (client as any).eval(RELEASE_LUA, 1, key, opts.token)) as any[];
+      const res = (await client.eval(RELEASE_LUA, 1, key, opts.token)) as unknown[];
       if (Array.isArray(res) && (res[0] === 0 || res[0] === false)) {
         return { released: false, error: "ownership mismatch" };
       }

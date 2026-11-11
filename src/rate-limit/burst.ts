@@ -1,4 +1,4 @@
-/* eslint-disable */
+import { Redis } from "ioredis";
 import { createRateLimiter } from "./limiter.js";
 import { createConcurrencyLimiter } from "./concurrency.js";
 import type { RateLimitDecision } from "./types.js";
@@ -28,7 +28,7 @@ export class BurstProtector {
   private readonly concurrency?: ReturnType<typeof createConcurrencyLimiter>;
   private readonly concurrencyResource: string;
 
-  constructor(private readonly redis: any, options: BurstProtectionOptions) {
+  constructor(private readonly redis: Redis, options: BurstProtectionOptions) {
     const prefix = options.keyPrefix ?? "burst";
     this.sustained = createRateLimiter(redis, {
       algorithm: "fixed-window",
@@ -73,7 +73,7 @@ export class BurstProtector {
     const decisions: Record<string, RateLimitDecision | { acquired: boolean; error?: string; token?: string }> = {
       sustained: sustainedCheck,
       burst: burstCheck,
-      concurrency: concurrencyCheck as any,
+      concurrency: concurrencyCheck,
     };
 
     let allowed = sustainedCheck.allowed && burstCheck.allowed && (this.concurrency ? concurrencyCheck.acquired : true);
@@ -120,6 +120,6 @@ export class BurstProtector {
   }
 }
 
-export function createBurstProtector(redis: any, options: BurstProtectionOptions): BurstProtector {
+export function createBurstProtector(redis: Redis, options: BurstProtectionOptions): BurstProtector {
   return new BurstProtector(redis, options);
 }

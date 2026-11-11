@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import type { Logger } from "../logger.js";
 import { createCoordinationKeyBuilder } from "./utils.js";
@@ -102,13 +101,13 @@ export class LeaderElectionCoordinator {
     this.timer = setInterval(() => {
       void this.tick();
     }, renewalInterval);
-    (this.timer as any)?.unref?.();
+    (this.timer as NodeJS.Timeout)?.unref?.();
   }
 
   private async tryAcquireOrRenew(initial: boolean) {
     if (this.options.signal?.aborted) return;
     const token = this.token!;
-    const res = (await (this.client as any).eval(ACQUIRE_LUA, 1, this.key(), token, this.options.leaseMs, this.options.candidateId)) as any[];
+    const res = (await this.client.eval(ACQUIRE_LUA, 1, this.key(), token, this.options.leaseMs, this.options.candidateId)) as unknown[];
     if (Array.isArray(res) && res[0] === 1) {
       const wasLeader = this.isLeaderFlag;
       this.isLeaderFlag = true;
@@ -136,7 +135,7 @@ export class LeaderElectionCoordinator {
       return;
     }
     const token = this.token!;
-    const res = (await (this.client as any).eval(RENEW_LUA, 1, this.key(), token, this.options.leaseMs)) as any[];
+    const res = (await this.client.eval(RENEW_LUA, 1, this.key(), token, this.options.leaseMs)) as unknown[];
     if (Array.isArray(res) && res[0] === 1) {
       this.term = Number(res[1]);
       this.leaseExpiresAt = Number(res[2]);
@@ -154,7 +153,7 @@ export class LeaderElectionCoordinator {
     }
     this.started = false;
     if (this.token) {
-      await (this.client as any).eval(RELEASE_LUA, 1, this.key(), this.token).catch(() => {});
+      await this.client.eval(RELEASE_LUA, 1, this.key(), this.token).catch(() => {});
     }
     const wasLeader = this.isLeaderFlag;
     this.isLeaderFlag = false;

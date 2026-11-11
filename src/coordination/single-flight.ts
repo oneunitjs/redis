@@ -1,9 +1,9 @@
-/* eslint-disable */
 import { Redis } from "ioredis";
 import type { Logger } from "../logger.js";
 import { createCoordinationKeyBuilder, resolveCoordinationConfig } from "./utils.js";
 import { generateOwnershipToken, validateResource, validateLeaseDuration, sleep } from "./utils.js";
 import type { SingleFlightResult, SingleFlightOptions } from "./types.js";
+import type { CoordinationClientConfig } from "./types.js";
 
 const ACQUIRE_OWNER_LUA = `
 local key = KEYS[1]
@@ -79,7 +79,7 @@ function createSingleFlightManagerImpl(opts: CreateSingleFlightManagerOptions): 
 
       while (true) {
         if (options.signal?.aborted) throw new Error("Cancelled");
-        const acq = (await (client as any).eval(ACQUIRE_OWNER_LUA, 1, key, token, options.leaseMs)) as any[];
+        const acq = (await client.eval(ACQUIRE_OWNER_LUA, 1, key, token, options.leaseMs)) as unknown[];
         if (!Array.isArray(acq)) throw new Error("Unexpected result");
         if (acq[0] === 1) {
           // owner
@@ -96,7 +96,7 @@ function createSingleFlightManagerImpl(opts: CreateSingleFlightManagerOptions): 
             payload = JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) });
           }
           // publish
-          await (client as any).eval(PUBLISH_LUA, 1, key, token, status, payload, resultTtl).catch(() => {});
+          await client.eval(PUBLISH_LUA, 1, key, token, status, payload, resultTtl).catch(() => {});
           if (status === "failed") {
             const parsed = JSON.parse(payload);
             throw new Error(parsed.error);
@@ -106,12 +106,12 @@ function createSingleFlightManagerImpl(opts: CreateSingleFlightManagerOptions): 
         if (acq[0] === 2) {
           // completed result
           const raw = acq[1];
-          let parsed: any = null;
+          let parsed: unknown = null;
           try { parsed = JSON.parse(String(raw)); } catch { parsed = null; }
-          if (parsed && parsed.ok) {
-            return { value: parsed.value as T, isOwner: false, fencingToken: 0 };
+          if (parsed && typeof parsed === "object" && (parsed as { ok?: boolean }).ok) {
+            return { value: (parsed as { ok: boolean; value: T }).value as T, isOwner: false, fencingToken: 0 };
           }
-          throw new Error(parsed?.error ?? "single-flight result error");
+          throw new Error((parsed as { error?: string })?.error ?? "single-flight result error");
         }
         if (acq[0] === 3) {
           throw new Error(String(acq[1] ?? "single-flight failed"));
@@ -126,9 +126,13 @@ function createSingleFlightManagerImpl(opts: CreateSingleFlightManagerOptions): 
   };
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createSingleFlightManager(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createSingleFlightManager(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createSingleFlightManagerImpl({
     client: resolved.client,

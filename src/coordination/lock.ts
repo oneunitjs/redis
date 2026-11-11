@@ -1,4 +1,4 @@
-/* eslint-disable */
+import { Redis } from "ioredis";
 import { createLeaseManager } from "./lease.js";
 import type { CreateLeaseManagerOptions } from "./lease.js";
 import { generateOwnerId, sleep } from "./utils.js";
@@ -10,7 +10,16 @@ import type {
   LockRenewOptions,
   LockReleaseOptions,
   WithLockResult,
+  CoordinationClientConfig,
 } from "./types.js";
+
+interface LockHandle {
+  token: string;
+  fencingToken: number;
+  resource: string;
+  leaseLost: () => boolean;
+  signal: AbortSignal;
+}
 
 function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
   const lease = createLeaseManager(opts);
@@ -18,26 +27,26 @@ function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
 
   async function withLock<T>(
     resourceOrOptions: string | LockAcquireOptions,
-    leaseMsOrCallback: number | ((handle: any) => T | Promise<T>),
-    callbackOrOptions?: ((handle: any) => T | Promise<T>) | Record<string, unknown>,
+    leaseMsOrCallback: number | ((handle: LockHandle) => T | Promise<T>),
+    callbackOrOptions?: ((handle: LockHandle) => T | Promise<T>) | Record<string, unknown>,
     optionsArg?: Record<string, unknown>,
   ): Promise<WithLockResult<T>> {
     // Resolve overloads
     let resource: string;
     let leaseMs: number;
-    let callback: (handle: any) => T | Promise<T>;
+    let callback: (handle: LockHandle) => T | Promise<T>;
     let options: Record<string, unknown> = {};
     if (typeof resourceOrOptions === "string") {
       resource = resourceOrOptions;
       leaseMs = leaseMsOrCallback as number;
-      callback = callbackOrOptions as any;
-      options = (optionsArg ?? {}) as any;
+      callback = callbackOrOptions as (handle: LockHandle) => T | Promise<T>;
+      options = (optionsArg ?? {}) as Record<string, unknown>;
     } else {
       const o = resourceOrOptions as LockAcquireOptions;
       resource = o.resource;
       leaseMs = o.leaseMs;
-      callback = leaseMsOrCallback as any;
-      options = (callbackOrOptions ?? {}) as any;
+      callback = leaseMsOrCallback as (handle: LockHandle) => T | Promise<T>;
+      options = (callbackOrOptions ?? {}) as Record<string, unknown>;
     }
 
     const timeoutMs = (options.timeoutMs ?? opts.defaultTimeoutMs) as number;
@@ -62,7 +71,7 @@ function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
     const fencingToken = acquired.fencingToken ?? 0;
 
     const abortController = new AbortController();
-    const handle: any = {
+    const handle: LockHandle = {
       token,
       fencingToken,
       resource,
@@ -88,12 +97,12 @@ function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
       renewalTimer = setInterval(() => {
         void renew();
       }, renewIntervalMs);
-       
-      (renewalTimer as any).unref?.();
+      
+      (renewalTimer as NodeJS.Timeout).unref?.();
     }
 
     let callbackError: unknown;
-    let callbackResult: any;
+    let callbackResult: T = undefined as T;
     let releaseError: unknown;
 
     try {
@@ -125,7 +134,7 @@ function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
     };
   }
 
-  const manager: any = {
+  const manager = {
     acquireLock: (o: LockAcquireOptions) => lease.acquire(o),
     tryLock: (o: LockTryOptions) => lease.tryAcquire(o),
     renewLock: (o: LockRenewOptions) => lease.renew(o),
@@ -143,9 +152,13 @@ function createLockManagerImpl(opts: CreateLeaseManagerOptions) {
   return manager;
 }
 
-
-function __toConfig(input: any, options?: any) { return (input && typeof input.eval === "function") ? { client: input, ...(options || {}) } : (options ? { ...input, ...options } : input); }
-export function createLockManager(input: any, options?: any) {
+function __toConfig(input: unknown, options?: Partial<CoordinationClientConfig>): CoordinationClientConfig {
+  if (input && typeof input === "object" && "eval" in input) {
+    return { client: input as Redis, ...(options || {}) };
+  }
+  return { ...(input as CoordinationClientConfig), ...(options || {}) };
+}
+export function createLockManager(input: unknown, options?: Partial<CoordinationClientConfig>) {
   const resolved = resolveCoordinationConfig(__toConfig(input, options));
   return createLockManagerImpl({
     client: resolved.client,
