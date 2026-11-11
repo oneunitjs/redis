@@ -5,6 +5,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/oneunitjs/redis">GitHub</a> ·
+  <a href="https://github.com/oneunitjs/redis/issues">Issues</a> ·
   npm version · license · node version · types included
 </p>
 

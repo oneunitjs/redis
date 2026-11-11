@@ -1,0 +1,136 @@
+{
+  "name": "@oneunit/redis",
+  "version": "1.1.0-beta",
+  "description": "Redis client and BullMQ job queues for Node.js. Works standalone or with any logger that has error, warn, info, and debug.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js",
+      "default": "./dist/client/index.js"
+    },
+    "./queue": {
+      "types": "./dist/queue/index.d.ts",
+      "import": "./dist/queue/index.js",
+      "default": "./dist/queue/index.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline/index.d.ts",
+      "import": "./dist/pipeline/index.js",
+      "default": "./dist/pipeline/index.js"
+    },
+    "./package.json": "./package.json",
+    "./features": {
+      "types": "./dist/features/index.d.ts",
+      "import": "./dist/features/index.js",
+      "default": "./dist/features/index.js"
+    },
+    "./resilience": {
+      "types": "./dist/resilience/index.d.ts",
+      "import": "./dist/resilience/index.js",
+      "default": "./dist/resilience/index.js"
+    },
+    "./auth": {
+      "types": "./dist/features/index.d.ts",
+      "import": "./dist/features/index.js",
+      "default": "./dist/features/index.js"
+    },
+    "./coordination": {
+      "types": "./dist/coordination/index.d.ts",
+      "import": "./dist/coordination/index.js",
+      "default": "./dist/coordination/index.js"
+    },
+    "./cache": {
+      "types": "./dist/cache/index.d.ts",
+      "import": "./dist/cache/index.js",
+      "default": "./dist/cache/index.js"
+    },
+    "./rate-limit": {
+      "types": "./dist/rate-limit/index.d.ts",
+      "import": "./dist/rate-limit/index.js",
+      "default": "./dist/rate-limit/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"const fs=require('node:fs');for(const p of ['dist','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude \"test/examples/**\" --exclude \"test/rate-limit/public-api.test.ts\"",
+    "test:layers": "vitest run test/layers --testTimeout 15000",
+    "test:coverage": "vitest run --exclude \"test/examples/**\" --exclude \"test/rate-limit/public-api.test.ts\" --coverage",
+    "certify": "tsx scripts/certify.ts",
+    "test:examples": "vitest run --exclude \"test/rate-limit/public-api.test.ts\"",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm test",
+    "pack:check": "npm pack --dry-run",
+    "verify": "npm run build && npm run typecheck && npm run lint && npm test && npm run test:examples && npm run pack:check",
+    "verify:ci": "npm run build && npm run typecheck && npm run lint && npm run test:coverage && npm run test:examples && npm run pack:check",
+    "example:efficient": "npm run build && node examples/efficient.js"
+  },
+  "keywords": [
+    "redis",
+    "ioredis",
+    "bullmq",
+    "queue",
+    "worker",
+    "cache",
+    "session",
+    "nodejs",
+    "microservice",
+    "oneunit"
+  ],
+  "author": "mayank",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneunitjs/redis.git",
+    "directory": "packages/redis"
+  },
+  "homepage": "https://github.com/oneunitjs/redis#readme",
+  "bugs": {
+    "url": "https://github.com/oneunitjs/redis/issues"
+  },
+  "dependencies": {
+    "bullmq": "^5.80.9",
+    "ioredis": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@vitest/coverage-v8": "^3.2.7",
+    "eslint": "^9.22.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.7"
+  },
+  "peerDependencies": {
+    "@oneunit/auth": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@oneunit/auth": {
+      "optional": true
+    }
+  }
+}
