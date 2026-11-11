@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://github.com/oneunitjs/redis">GitHub</a> ·
   <a href="https://github.com/oneunitjs/redis/issues">Issues</a> ·
+  <a href="https://github.com/oneunitjs/redis/issues/new?template=bug_report.md">Report Bug</a> ·
   npm version · license · node version · types included
 </p>
 
