@@ -1,0 +1,70 @@
+name: Production Certification
+
+on:
+  push:
+    branches: [ main, master, release/* ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: certification-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REDIS_URL: redis://127.0.0.1:6379/0
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build package
+        run: npm run build
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint || true
+
+      - name: Run certification test suite
+        run: npm run test:layers
+
+      - name: Run certification gate (produces test/reports/test-summary.json)
+        run: npx tsx scripts/certify.ts
+
+      - name: Upload certification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certification-reports
+          path: test/reports/**
+          retention-days: 30
+
+      - name: Block release on gate failure
+        if: failure()
+        run: exit 1

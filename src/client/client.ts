@@ -1,0 +1,300 @@
+import { Redis } from "ioredis";
+import { attachEvents, attachErrorHandling } from "./events.js";
+import { normalizeLogger, type Logger } from "../logger.js";
+import type { RedisOptions } from "ioredis";
+import { createResilientRedis, type ResilientRedisOptions } from "../resilient-redis.js";
+import type { ResilientRedisFacade } from "../resilient-redis.js";
+import type { JobAtLeastOnce, JobAtLeastOnceOptions } from "../jobs/at-least-once.js";
+import { createRequire } from "node:module";
+
+export interface RedisClientOptions extends RedisOptions {
+  url?: string;
+  lazyConnect?: boolean;
+  errorHandling?: import("./events.js").ErrorHandlingOptions;
+  /** Optional embedded resilience configuration. When present, `createClient` returns a resilient client. */
+  resilience?: ResilientRedisOptions;
+  fallback?: ResilientRedisOptions["fallback"];
+  recovery?: ResilientRedisOptions["recovery"];
+  ownsClient?: boolean;
+  shutdownClient?: boolean;
+  maxBufferSize?: number;
+  maxPendingOperations?: number;
+  maxPendingAge?: number;
+  onLimitExceeded?: "reject";
+  maxOperations?: number;
+  maxPayloadBytes?: number;
+  maxOperationBytes?: number;
+  enabled?: boolean;
+  autoRecover?: boolean;
+  overflow?: import("../resilience/types.js").OverflowPolicy;
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  jitter?: boolean;
+  recoveryBatchSize?: number;
+  recoveryConcurrency?: number;
+  dedupeOnRecovery?: boolean;
+  conflictPolicy?: import("../resilience/types.js").ConflictPolicy;
+  /** Enable at-least-once job processing. Can be a boolean or options object. */
+  atLeastOnce?: boolean | JobAtLeastOnceOptions;
+  /** Key prefix for at-least-once job queue (also used for BullMQ prefix). */
+  prefix?: string;
+  jobAtLeastOnce?: JobAtLeastOnceOptions;
+}
+
+export function createClient(
+  options: RedisClientOptions & {
+    resilience?: ResilientRedisOptions;
+    fallback?: ResilientRedisOptions["fallback"];
+    recovery?: ResilientRedisOptions["recovery"];
+  },
+  logger?: Logger,
+): Redis & ResilientRedisFacade;
+export function createClient(
+  options?: RedisClientOptions | string,
+  logger?: Logger,
+): Redis {
+
+  // ioredis's own constructor accepts `new Redis("redis://host:port")`, so
+  // that is the form people reach for first. Destructuring the string as an
+  // options object produces no `url`, which leaves the client pointing at
+  // localhost:6379: a silent connection to the wrong server, with no error
+  // anywhere to notice it by.
+  const resolved: RedisClientOptions =
+    typeof options === "string" ? { url: options } : (options ?? {});
+
+  const {
+    url: explicitUrl,
+    lazyConnect = true,
+    errorHandling,
+    // BullMQ throws unless this is null on the connections it drives, and
+    // `createQueue`/`createWorker` take this same client instance.
+    maxRetriesPerRequest = null,
+    // When BullMQ features are enabled, disable ioredis's built-in retry so
+    // that connection duplicates created by Queue/QueueEvents do not enter
+    // an unbounded reconnect loop that prevents clean teardown.
+    retryStrategy: providedRetryStrategy,
+    resilience: resilienceOption,
+    fallback: fallbackOption,
+    recovery: recoveryOption,
+    ownsClient: ownsOption,
+    shutdownClient: shutdownOption,
+    // Direct resilience limit/configuration fields are hoisted so createClient
+    // can configure resilience without a nested resilience object.
+    maxBufferSize: maxBufferSizeOption,
+    maxPendingOperations: maxPendingOperationsOption,
+    maxPendingAge: maxPendingAgeOption,
+    onLimitExceeded: onLimitExceededOption,
+    maxOperations: maxOperationsOption,
+    maxPayloadBytes: maxPayloadBytesOption,
+    maxOperationBytes: maxOperationBytesOption,
+    enabled: enabledOption,
+    autoRecover: autoRecoverOption,
+    overflow: overflowOption,
+    maxRetries: maxRetriesOption,
+    baseDelayMs: baseDelayMsOption,
+    maxDelayMs: maxDelayMsOption,
+    jitter: jitterOption,
+    recoveryBatchSize: recoveryBatchSizeOption,
+    recoveryConcurrency: recoveryConcurrencyOption,
+    dedupeOnRecovery: dedupeOnRecoveryOption,
+    conflictPolicy: conflictPolicyOption,
+    jobAtLeastOnce: jobAtLeastOnceOption,
+    atLeastOnce: atLeastOnceOption,
+    prefix: prefixOption,
+    ...restOptions
+  } = resolved;
+
+  const retryStrategy = providedRetryStrategy ?? (
+    atLeastOnceOption === true ||
+    (typeof atLeastOnceOption === "object" && atLeastOnceOption !== null && atLeastOnceOption.enabled) ||
+    (typeof jobAtLeastOnceOption === "object" && jobAtLeastOnceOption !== null && jobAtLeastOnceOption.enabled)
+      ? () => null
+      : undefined
+  );
+
+  const url = explicitUrl ?? process.env.REDIS_URL;
+
+  if (typeof url !== "string" || url.trim() === "") {
+    throw new Error("No Redis URL provided. Pass a URL or set REDIS_URL.");
+  }
+
+  if (restOptions.keyPrefix !== undefined) {
+    throw new Error("keyPrefix is incompatible with BullMQ; use BullMQ prefix instead.");
+  }
+
+
+  // ioredis only reads `url` from the first positional argument; an options
+  // object carrying `url` is silently ignored and connects to localhost.
+  const client = url
+    ? new Redis(url, { ...restOptions, lazyConnect, maxRetriesPerRequest, retryStrategy })
+    : new Redis({ ...restOptions, lazyConnect, maxRetriesPerRequest, retryStrategy });
+
+  // Defensive patch: suppress benign "Connection is closed" rejections from
+  // ioredis's StandaloneConnector. When disconnect() races with connect()
+  // (e.g. BullMQ's duplicated blocking connection closing during worker
+  // teardown), the connector's promise rejects with "Connection is closed."
+  // Only that exact message is swallowed; all other errors propagate normally.
+  // Patching the prototype covers duplicated clients (e.g. client.duplicate())
+  // that BullMQ creates internally and that bypass per-instance wrapping.
+  const _originalConnect = Redis.prototype.connect;
+  Redis.prototype.connect = function (this: Redis, callback?: Parameters<typeof _originalConnect>[0]) {
+    const result = _originalConnect.call(this, callback);
+    if (result instanceof Promise) {
+      return result.catch((err) => {
+        if (err instanceof Error && err.message === "Connection is closed.") {
+          return undefined;
+        }
+        throw err;
+      });
+    }
+    return result;
+  } as unknown as typeof _originalConnect;
+
+  // A caller-supplied logger may implement only some of the levels. Completing
+  // it here keeps `attachEvents` from throwing mid-connection-event.
+  attachEvents(client, normalizeLogger(logger));
+
+  if (errorHandling?.enabled) {
+    attachErrorHandling(client, { ...errorHandling, logger: errorHandling.logger ?? logger });
+  }
+
+  const directResilienceFields = {
+    ...(maxBufferSizeOption !== undefined ? { maxBufferSize: maxBufferSizeOption } : {}),
+    ...(maxPendingOperationsOption !== undefined ? { maxPendingOperations: maxPendingOperationsOption } : {}),
+    ...(maxPendingAgeOption !== undefined ? { maxPendingAge: maxPendingAgeOption } : {}),
+    ...(onLimitExceededOption !== undefined ? { onLimitExceeded: onLimitExceededOption } : {}),
+    ...(maxOperationsOption !== undefined ? { maxOperations: maxOperationsOption } : {}),
+    ...(maxPayloadBytesOption !== undefined ? { maxPayloadBytes: maxPayloadBytesOption } : {}),
+    ...(maxOperationBytesOption !== undefined ? { maxOperationBytes: maxOperationBytesOption } : {}),
+    ...(enabledOption !== undefined ? { enabled: enabledOption } : {}),
+    ...(autoRecoverOption !== undefined ? { autoRecover: autoRecoverOption } : {}),
+    ...(overflowOption !== undefined ? { overflow: overflowOption } : {}),
+    ...(maxRetriesOption !== undefined ? { maxRetries: maxRetriesOption } : {}),
+    ...(baseDelayMsOption !== undefined ? { baseDelayMs: baseDelayMsOption } : {}),
+    ...(maxDelayMsOption !== undefined ? { maxDelayMs: maxDelayMsOption } : {}),
+    ...(jitterOption !== undefined ? { jitter: jitterOption } : {}),
+    ...(recoveryBatchSizeOption !== undefined ? { recoveryBatchSize: recoveryBatchSizeOption } : {}),
+    ...(recoveryConcurrencyOption !== undefined ? { recoveryConcurrency: recoveryConcurrencyOption } : {}),
+    ...(dedupeOnRecoveryOption !== undefined ? { dedupeOnRecovery: dedupeOnRecoveryOption } : {}),
+    ...(conflictPolicyOption !== undefined ? { conflictPolicy: conflictPolicyOption } : {}),
+  };
+
+  const hasDirectResilienceConfig = Object.keys(directResilienceFields).length > 0;
+
+  // Support atLeastOnce as boolean shorthand or options object, and use prefix from createClient options
+  const atLeastOnceObj = typeof atLeastOnceOption === "object" && atLeastOnceOption !== null
+    ? atLeastOnceOption
+    : jobAtLeastOnceOption ?? {};
+  const atLeastOnceEnabled = atLeastOnceOption === true || atLeastOnceObj.enabled === true;
+  const jobPrefix = prefixOption ?? atLeastOnceObj.prefix;
+  const queueName = atLeastOnceObj.queueName ?? jobAtLeastOnceOption?.queueName ?? "application-jobs";
+
+  let jobFeature: JobAtLeastOnce;
+  if (atLeastOnceEnabled) {
+    // Load BullMQ-backed job processing only when it is explicitly enabled so
+    // that importing `@oneunit/redis/client` does not pull BullMQ at rest.
+    const requireModule = createRequire(import.meta.url);
+    const { createJobAtLeastOnce } = requireModule("../jobs/at-least-once.js") as {
+      createJobAtLeastOnce: (options: JobAtLeastOnceOptions & { connection: unknown }) => JobAtLeastOnce;
+    };
+    jobFeature = createJobAtLeastOnce({
+      ...atLeastOnceObj,
+      ...jobAtLeastOnceOption,
+      enabled: true,
+      prefix: jobPrefix,
+      connection: client,
+      ownsConnection: false,
+      logger: atLeastOnceObj.logger ?? jobAtLeastOnceOption?.logger ?? logger,
+    });
+  } else {
+    jobFeature = createDisabledJobAtLeastOnce(queueName);
+  }
+  (client as unknown as { jobAtLeastOnce?: JobAtLeastOnce }).jobAtLeastOnce = jobFeature;
+
+  const resilienceConfig =
+    resilienceOption || fallbackOption || recoveryOption || hasDirectResilienceConfig
+      ? {
+          ...directResilienceFields,
+          ...resilienceOption,
+          fallback: {
+            ...directResilienceFields,
+            ...fallbackOption,
+            ...(resilienceOption?.fallback ?? {}),
+          },
+          recovery: {
+            ...recoveryOption,
+            ...(resilienceOption?.recovery ?? {}),
+          },
+        }
+      : undefined;
+
+  if (resilienceConfig) {
+    const wrapped = createResilientRedis(client, {
+      ...resilienceConfig,
+      logger: resilienceConfig.logger ?? logger,
+      ownsClient: ownsOption ?? true,
+      shutdownClient: shutdownOption ?? true,
+    });
+    return wrapped as unknown as Redis;
+  }
+
+  return client;
+}
+
+
+function createDisabledJobAtLeastOnce(queueName: string): JobAtLeastOnce {
+  const disabled = (message: string): never => {
+    throw new Error(message);
+  };
+  return {
+    enabled: false,
+    queueName,
+    async add(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async addBulk(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async schedule(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async removeSchedule(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async getSchedules(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    createWorker(): never {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async getCounts(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async pause(): Promise<void> {
+      disabled("At-least-once job processing is disabled");
+    },
+    async resume(): Promise<void> {
+      disabled("At-least-once job processing is disabled");
+    },
+    async isPaused(): Promise<never> {
+      return disabled("At-least-once job processing is disabled");
+    },
+    async drain(): Promise<void> {
+      disabled("At-least-once job processing is disabled");
+    },
+    async obliterate(): Promise<void> {
+      disabled("At-least-once job processing is disabled");
+    },
+    async close(): Promise<void> {
+    },
+    status() {
+      return { enabled: false, queueName, isClosed: true };
+    },
+    getDlq() {
+      return null;
+    },
+  } as JobAtLeastOnce;
+}
+
+export type { Logger } from "../logger.js";

@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  # ------------------------------------------------------------------
+  # Standalone Redis — used by most hermetic integration tests.
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+
+  # ------------------------------------------------------------------
+  # ACL-restricted Redis — least-privilege user for security tests.
+  # ------------------------------------------------------------------
+  redis-acl:
+    image: redis:7-alpine
+    command: >
+      redis-server --save "" --appendonly no
+      --requirepass admin-secret
+      --aclfile /etc/redis/acl.conf
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./acl.conf:/etc/redis/acl.conf:ro
+
+  # ------------------------------------------------------------------
+  # Redis with a simple secondary for replication/failover drills.
+  # ------------------------------------------------------------------
+  redis-replica:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no --replicaof redis 6379
+    ports:
+      - "6381:6379"
+    depends_on:
+      - redis
+
+volumes: {}
