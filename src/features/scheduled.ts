@@ -1,5 +1,4 @@
 import { Redis as IORedis } from "ioredis";
-import type { SessionStore } from "@oneunit/auth";
 import type { Logger } from "../logger.js";
 import { createRedisSessionStore } from "./stores.js";
 import { createQueue, createWorker, type Queue, type Worker } from "../queue/index.js";
@@ -8,7 +7,9 @@ import { normalizeLogger } from "../logger.js";
 export interface ScheduledSessionRevocationConfig {
   connection: IORedis;
   redis?: IORedis;
-  sessionStore?: SessionStore;
+  sessionStore?: {
+    revokeSession?: (sessionId: string) => Promise<void>;
+  };
   queueName?: string;
   prefix?: string;
   concurrency?: number;

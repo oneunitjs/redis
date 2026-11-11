@@ -1,10 +1,32 @@
 import { Redis as IORedis } from "ioredis";
-import type {
-  RefreshRecord,
-  RefreshStore,
-  SessionStore,
-  StateStore,
-} from "@oneunit/auth";
+
+export interface RefreshRecord {
+  id: string;
+  userId: string | number;
+  tokenHash: string;
+  expiresAt: number;
+}
+
+export interface RefreshStore {
+  save(record: RefreshRecord): Promise<void>;
+  get(id: string): Promise<{ id: string; userId: unknown; tokenHash: string; expiresAt: number } | null>;
+  consume(id: string): Promise<{ id: string; userId: unknown; tokenHash: string; expiresAt: number } | null>;
+  revoke(id: string): Promise<void>;
+}
+
+export interface SessionStore {
+  getVersion(userId: string | number): Promise<number>;
+  bumpVersion(userId: string | number): Promise<number>;
+  revokeSession(sessionId: string): Promise<void>;
+  isSessionRevoked(sessionId: string): Promise<boolean>;
+}
+
+export interface StateStore {
+  set(id: string, value: unknown, ttlSeconds?: number): Promise<void>;
+  get(id: string): Promise<unknown | null>;
+  delete(id: string): Promise<void>;
+  consume(id: string): Promise<unknown | null>;
+}
 
 export interface RedisStoreOptions {
   keyPrefix?: string;
@@ -165,7 +187,7 @@ export function createRedisStateStore(
   }
 
   return {
-    async set(id, value, ttlSeconds = 600) {
+    async set(id: string, value: unknown, ttlSeconds = 600) {
       const payload = JSON.stringify({ value, expiresAt: Date.now() + ttlSeconds * 1000 });
       if (ttlSeconds > 0) {
         await redis.set(key(id), payload, "EX", ttlSeconds);
@@ -173,7 +195,7 @@ export function createRedisStateStore(
         await redis.set(key(id), payload);
       }
     },
-    async get(id) {
+    async get(id: string) {
       const raw = await redis.get(key(id));
       if (!raw) return null;
       let data: { value: unknown; expiresAt: number };
@@ -189,10 +211,10 @@ export function createRedisStateStore(
       }
       return data.value ?? null;
     },
-    async delete(id) {
+    async delete(id: string) {
       await redis.del(key(id));
     },
-    async consume(id) {
+    async consume(id: string) {
       const redisKey = key(id);
       const result = await redis.eval(consumeScript, 1, redisKey, String(Date.now()));
       if (!result) return null;
