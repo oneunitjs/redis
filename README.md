@@ -1,687 +1,744 @@
+# @oneunit/redis
+
 <p align="center">
-  <strong>@oneunit/redis</strong>
-  <br/>
-  Redis client, BullMQ job queues, distributed rate limiting, coordination, caching & resilience for Node.js
+  <img src="https://img.shields.io/npm/v/@oneunit/redis?style=flat-square&label=%40oneunit%2Fredis&color=dc382c" alt="npm version" />
+  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen?style=flat-square" alt="Node.js ≥ 20" />
+  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" />
+  <img src="https://img.shields.io/badge/ESM-only-f7df1e?style=flat-square" alt="ESM only" />
+</p>
+
+<h1 align="center">@oneunit/redis</h1>
+
+<p align="center">
+  <strong>Redis client · BullMQ queues · Rate limiting · Distributed coordination · Caching · Resilience</strong><br/>
+  A thin, opinionated integration layer over <a href="https://github.com/luin/ioredis">ioredis</a> and <a href="https://bullmq.io">BullMQ</a> for production Node.js services.
 </p>
 
 <p align="center">
-  <a href="https://github.com/oneunitjs/redis">GitHub</a> ·
-  <a href="https://github.com/oneunitjs/redis/issues">Issues</a> ·
-  <a href="https://github.com/oneunitjs/redis/issues/new?template=bug_report.md">Report Bug</a> ·
-  npm version · license · node version · types included
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-installation">Installation</a> ·
+  <a href="#-usage-guides">Usage Guides</a> ·
+  <a href="#-api-reference">API Reference</a> ·
+  <a href="#-best-practices">Best Practices</a> ·
+  <a href="#-troubleshooting">Troubleshooting</a>
 </p>
 
 ---
 
-# User Manual — `@oneunit/redis`
+## ✨ Why @oneunit/redis?
 
-This manual walks you through installing, configuring, and using every feature of `@oneunit/redis` (codename **machism**). It is written for end-users integrating Redis into Node.js applications.
+Working with Redis in production is deceptively hard. Raw ioredis gives you full power but zero guardrails — silent `localhost` fallbacks, unbounded reconnect loops, credential leaks in logs, no shutdown ordering, and copy-pasted rate-limiter code across every service.
 
-## Table of Contents
+`@oneunit/redis` solves all of that with **one install**:
 
-1. [Project Overview](#1-project-overview)
-2. [Installation Guide](#2-installation-guide)
-3. [Core Concepts](#3-core-concepts)
-4. [API Reference — Redis Client](#4-api-reference-redis-client)
-5. [API Reference — Queues & Workers](#5-api-reference-queues--workers)
-6. [API Reference — Pipeline Batching](#6-api-reference-pipeline-batching)
-7. [API Reference — Distributed Rate Limiting](#7-api-reference-distributed-rate-limiting)
-8. [API Reference — Distributed Coordination](#8-api-reference-distributed-coordination)
-9. [API Reference — Caching](#9-api-reference-caching)
-10. [API Reference — Resilience Engine](#10-api-reference-resilience-engine)
-11. [API Reference — At-Least-Once Jobs](#11-api-reference-at-least-once-jobs)
-12. [API Reference — Auth Stores & Core Helpers](#12-api-reference-auth-stores--core-helpers)
-13. [Parameter Specifications](#13-parameter-specifications)
-14. [Usage Examples](#14-usage-examples)
-15. [Troubleshooting & FAQ](#15-troubleshooting--faq)
-16. [Optimization & Best Practices](#16-optimization--best-practices)
-17. [Glossary](#17-glossary)
-18. [Documentation Index](#18-documentation-index)
-19. [License](#19-license)
-
----
-
-## 1. Project Overview
-
-### What is @oneunit/redis?
-
-`@oneunit/redis` (codename **machism**) is a thin, opinionated integration layer over **ioredis** (a robust Redis client for Node.js) and **BullMQ** (a Redis-backed job queue library). The package does not replace these libraries — it returns native `ioredis` and `BullMQ` objects unchanged. Instead, it adds safe defaults, explicit contracts, bounded operations, and modular, independently loadable subsystems.
-
-### Core Functionality
-
-| Area | What it provides |
+| Problem | Solution |
 |---|---|
-| Redis client | Connection factory, health checks, shutdown, transactions, Sentinel/Cluster support |
-| Queues & workers | BullMQ queue and worker factories, shared connections, DLQ, flow producer |
-| Pipeline | Bounded batching of Redis commands |
-| Rate limiting | Fixed window, sliding window, token bucket, leaky bucket, quotas, concurrency, burst |
-| Coordination | Distributed locks, semaphores, leases, leader election, barriers, fencing |
-| Caching | L1 in-process cache, Redis layer, write-behind, stale-while-revalidate, tag invalidation |
-| Resilience | Outage fallback, local buffering, TTL-preserving recovery |
-| Jobs | Optional at-least-once BullMQ job processing |
-| Auth stores | Session, refresh-token, and state stores with TTL |
-
-### Intended Use Cases
-
-- Micro-services that need reliable Redis connectivity without reinventing safety checks.
-- Distributed systems requiring rate-limiting, distributed locks, leader election, or job queues.
-- Applications that must survive temporary Redis outages gracefully (resilience engine).
-- Teams that want credential safety, bounded deadlines, and clear ownership contracts in their Redis code.
+| Silent connection to wrong host | `createClient()` **requires** a URL — throws if missing |
+| Credentials in logs | `redactError()` strips passwords before they reach your logger |
+| Unbounded reconnect loops | `maxRetriesPerRequest: null` default, BullMQ-compatible |
+| Reinventing rate limiting | 4 algorithms, quotas, burst protection, concurrency — built-in |
+| Distributed locking bugs | Fencing tokens, TTL expiry, auto-renewal — all handled |
+| Redis outage = app down | Resilience engine: local fallback + write-journal + auto-recovery |
+| Teardown that hangs | Bounded `shutdown()` with correct ordering |
+| Importing unused code | Tree-shakeable subpath exports per module |
 
 ---
 
-## 2. Installation Guide
+## 📋 Features
 
-### Step 1 — Install from npm
+| Module | Import path | What you get |
+|---|---|---|
+| **Client** | `@oneunit/redis/client` | Connection factory, health checks, graceful shutdown, transactions, Sentinel/Cluster |
+| **Queues & Workers** | `@oneunit/redis/queue` | BullMQ factories, shared connection, DLQ, job registry, middleware, flow producer |
+| **Rate Limiting** | `@oneunit/redis/rate-limit` | Fixed window, sliding window, token bucket, leaky bucket, quotas, concurrency, burst |
+| **Coordination** | `@oneunit/redis/coordination` | Distributed locks, semaphores, leader election, barriers, fencing tokens, single-flight |
+| **Caching** | `@oneunit/redis/cache` | L1 in-process cache + Redis, write-behind, stale-while-revalidate, tag invalidation |
+| **Resilience** | `@oneunit/redis/resilience` | Outage fallback, local write journal, auto-recovery |
+| **Pipeline** | `@oneunit/redis/pipeline` | Bounded pipeline batching |
+| **Auth Stores** | `@oneunit/redis/features` | Session, refresh-token, state stores with TTL |
+
+---
+
+## ⚡ Quick Start
+
+### 1. Install
 
 ```bash
 npm install @oneunit/redis
 ```
 
-`ioredis` and `bullmq` are bundled dependencies. `@oneunit/auth` is an optional peer dependency (only needed if you use auth stores).
+### 2. Start Redis
 
-### Step 2 — Set up a Redis instance
-
-You need access to a Redis server. Common options:
-
-- **Local development:** install Redis via Docker or your OS package manager.
-- **Cloud:** Redis Cloud, AWS ElastiCache, Azure Cache for Redis, etc.
-- **Docker:** `docker run -d --name redis -p 6379:6379 redis:alpine`
-
-You will need the Redis connection URL, typically in the form:
-
-```
-redis://[:password@]host:port[/db]
+```bash
+# Docker (recommended for local dev)
+docker run -d --name redis -p 6379:6379 redis:alpine
 ```
 
-### Step 3 — Configure the URL
-
-Set the `REDIS_URL` environment variable:
+### 3. Set your URL
 
 ```bash
 export REDIS_URL="redis://127.0.0.1:6379"
 ```
 
-Or pass it directly when creating a client (see Section 4).
-
-### Step 4 — Verify installation
-
-Create a small test file `test-connection.ts`:
+### 4. Connect and use
 
 ```typescript
 import { createClient, health, shutdown } from "@oneunit/redis";
 
 const redis = createClient({ url: process.env.REDIS_URL });
 
-await health(redis, { timeout: 1000 });
-console.log("Redis is reachable.");
+// Verify connection
+const { status, latencyMs } = await health(redis);
+console.log(`Redis is ${status} (${latencyMs}ms)`);
 
-await shutdown(redis);
+// Basic read/write — full ioredis API available
+await redis.set("user:1", JSON.stringify({ name: "Alice" }), "EX", 3600);
+const raw = await redis.get("user:1");
+console.log(JSON.parse(raw!)); // { name: "Alice" }
+
+// Always shut down gracefully
+process.on("SIGTERM", () => shutdown(redis).then(() => process.exit(0)));
 ```
 
-Run it:
+> **That's it.** No boilerplate, no silent `localhost` fallback, no credential leaks.
+
+---
+
+## 📦 Installation
 
 ```bash
-npx tsx test-connection.ts
+npm install @oneunit/redis
 ```
 
-You should see `Redis is reachable.`
+**Requirements:**
+- Node.js ≥ 20
+- A running Redis instance (5.x, 6.x, or 7.x)
+- `ioredis` and `bullmq` are **bundled** — no separate install needed
+- `@oneunit/auth` is an **optional peer** (only if you use auth stores)
 
----
-
-## 3. Core Concepts
-
-### Explicit URL
-
-`createClient()` requires a Redis URL (via argument or `REDIS_URL` environment variable). It never silently connects to `localhost:6379`.
-
-### Lazy connect
-
-By default, `lazyConnect: true` defers the actual TCP connection until the first command. This keeps cold-start latency low and avoids import-time side effects.
-
-### Subpath imports
-
-Import only the subsystems you need:
+**Subpath imports** let you load only what you need:
 
 ```typescript
+// Only loads the client — zero BullMQ overhead
 import { createClient } from "@oneunit/redis/client";
+
+// Only loads rate limiting
 import { createRateLimiter } from "@oneunit/redis/rate-limit";
-import { createCoordinationClient } from "@oneunit/redis/coordination";
-import { createRedisCache } from "@oneunit/redis/cache";
+
+// Or import everything from the root (convenient for smaller projects)
+import { createClient, createRateLimiter, createCoordinationClient } from "@oneunit/redis";
 ```
 
-This keeps your bundle small and avoids pulling in BullMQ unless you use queues or jobs.
+---
 
-### Ownership
+## 🗺️ Architecture Overview
 
-Every resource has a documented owner:
+```
+Your Application
+       │
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│                    @oneunit/redis                        │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐ │
+│  │  Client  │  │  Queue/  │  │    Rate Limiter /      │ │
+│  │ createC  │  │  Worker  │  │   Coordination /       │ │
+│  │  lient() │  │ (BullMQ) │  │   Cache / Resilience   │ │
+│  └────┬─────┘  └────┬─────┘  └──────────┬────────────┘ │
+│       │              │                   │               │
+│       └──────────────┴───────────────────┘               │
+│                       │                                  │
+│              Shared Redis Connection                     │
+│          (one client, many features)                     │
+└─────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+                   Redis Server
+            (Standalone / Sentinel / Cluster)
+```
 
-| Factory | Owned by | Closed by |
-|---|---|---|
-| `createClient()` | Application | `shutdown()` |
-| `createQueue()` / `createWorker()` | Caller | `queue.close()` / `worker.close()` |
-| `attachQueueEvents()` | Caller | `events.close()` |
-| `createResilientRedis()` | Caller | `shutdown()` |
-
-Always close resources in order during shutdown: workers → QueueEvents → queues → client.
+**Key design rule:** Create **one** `createClient()` instance and share it across all features. Each feature (rate limiter, cache, coordination, queue) accepts the same client.
 
 ---
 
-## 4. API Reference — Redis Client
+## 📖 Usage Guides
 
-### `createClient(urlOrOptions, logger?)`
+### Redis Client
 
-Creates a native `ioredis` client with safe defaults.
-
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `urlOrOptions` | `string` or `RedisClientOptions` | Yes | — | Redis URL string, or an options object with `url`, `lazyConnect`, etc. |
-| `logger` | `Logger` | No | no-op | Optional logger with `{ error, warn, info, debug }` methods. |
-
-#### Options object fields
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `url` | `string` | `process.env.REDIS_URL` | Redis connection URL. Required if no positional string given. |
-| `lazyConnect` | `boolean` | `true` | Defer connection until first command. |
-| `maxRetriesPerRequest` | `number \| null` | `null` | `null` disables per-request retries (BullMQ-compatible). |
-| `resilience` | `ResilientRedisOptions` | — | Enables outage fallback/recovery. |
-| `jobAtLeastOnce` | `boolean \| JobAtLeastOnceOptions` | `false` | Enables optional at-least-once job processing. |
-| `ownsClient` / `shutdownClient` | `boolean` | — | Whether `shutdown()` closes the underlying client. |
-
-**Returns:** A native `Redis` instance, or `Redis & ResilientRedisFacade` if resilience is enabled.
-
-### `health(client, options)`
-
-Performs a bounded `PING` and returns status + latency.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `client` | `Redis` | — | The client to check. |
-| `options.timeout` | `number` | `1000` ms | Maximum time to wait for the PING. Invalid/negative values fall back to 1000 ms. |
-
-**Returns:** `{ status: "up" \| "down", latencyMs: number, error?: string }`. The promise always settles within the deadline.
-
-### `shutdown(client, options)`
-
-Idempotent graceful shutdown. Safe to call multiple times.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `client` | `Redis` | — | The client to shut down. |
-| `options.timeout` | `number` | `5000` ms | Max time to wait for `QUIT` before forcing disconnect. |
-| `options.logger` | `Logger` | — | Optional logger for warnings. |
-
-### `runTransaction(redis, steps, options)`
-
-Wraps `MULTI`/`EXEC` with typed steps, bounded timeout, and credential redaction.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `redis` | `Redis` | — | Target client. |
-| `steps` | `TransactionStep[]` | — | Array of `{ label, run }` pairs. Each `run` must queue exactly one command. |
-| `options.timeout` | `number` | `5000` ms | Max time to wait for `EXEC`. |
-| `options.watch` | `string[]` | — | Keys to `WATCH` before `MULTI`. |
-| `options.throwOnError` | `boolean` | — | Whether step failures throw. |
-| `options.logger` | `Logger` | — | Optional logger. |
-
-**Returns:** `{ executed: boolean, results: unknown[], durationMs: number, failed: number }`.
-
-### `attachEvents(client)`
-
-Attaches ioredis lifecycle event handlers (`connect`, `ready`, `reconnecting`, `error`, `close`).
-
-### `attachErrorHandling(client, options)`
-
-Attaches typed error classification and retry policies.
-
-### `redactError(error)`
-
-Strips passwords/tokens from error messages before logging or re-throwing.
-
-### `createSentinelClient(options)`
-
-Creates a Sentinel-backed client. Pass-through to ioredis Sentinel options.
-
-### `createClusterClient(nodes, options)`
-
-Creates an ioredis Cluster client. See Section 16 for cluster key design rules.
-
----
-
-## 5. API Reference — Queues & Workers
-
-### `createQueue(config)`
-
-Creates a BullMQ `Queue` with a shared connection.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | `string` | Yes | — | Queue name. |
-| `connection` | `Redis` | Yes | — | Shared ioredis client. |
-| `prefix` | `string` | No | `'queue'` | Redis key prefix. |
-| `defaultJobOptions` | `JobsOptions` | No | see below | Defaults applied to all jobs. |
-| `settings` | `QueueOptions["settings"]` | No | — | BullMQ queue settings. |
-
-**Default job options:** `removeOnComplete: 100`, `removeOnFail: 1000`, `attempts: 3`, `backoff: { type: "exponential", delay: 1000 }`.
-
-### `createWorker(config)`
-
-Creates a BullMQ `Worker` with optional middleware chaining.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | `string` | Yes | — | Worker name (must match queue name). |
-| `processor` | `Processor` | Yes | — | Job processing function `(job) => Promise<TResult>`. |
-| `connection` | `Redis` | Yes | — | Shared ioredis client. |
-| `prefix` | `string` | No | `'queue'` | Redis key prefix. |
-| `concurrency` | `number` | No | — | Max concurrent jobs. |
-| `limiter` | `WorkerOptions["limiter"]` | No | — | Job rate limiter. |
-| `middleware` | `JobMiddleware[]` | No | `[]` | Middleware chain. |
-
-**Returns:** `WorkerWithMiddleware` supporting `.use(middleware)` chaining.
-
-### `attachQueueEvents(config)`
-
-Listens for BullMQ queue events (completed, failed, stalled, etc.).
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `queue` | `Queue` | Yes | — | The queue to observe. |
-| `prefix` | `string` | No | `'queue'` | Redis key prefix (inherits from queue). |
-| `connection` | `Redis` | Yes | — | Shared ioredis client. |
-| `logger` | `Logger` | No | — | Optional logger. |
-
-**Returns:** `ManagedQueueEvents` — disconnects duplicated clients before `close()` to prevent orphaned reconnect loops.
-
----
-
-## 6. API Reference — Pipeline Batching
-
-### `runPipeline(redis, steps, options)`
-
-Executes one Redis command per step with bounded execution and per-command error reporting.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `redis` | `Redis` | — | Target client. |
-| `steps` | `PipelineStep[]` | — | Each step queues exactly one command. |
-| `options.timeout` | `number` | `5000` ms | Max wait time. |
-| `options.logger` | `Logger` | — | Optional logger. |
-
-**Returns:** Per-command results with individual error handling — a failed step does not abort the whole batch.
-
-### `pipelineValues(steps)`
-
-Extracts typed values from pipeline results.
-
----
-
-## 7. API Reference — Distributed Rate Limiting
-
-### `createRateLimiter(client, options)`
-
-Creates a rate limiter for one of four algorithms.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `algorithm` | `"fixed-window" \| "sliding-window" \| "token-bucket" \| "leaky-bucket"` | Yes | — | Limiting algorithm. |
-| `limit` | `number` | Yes | — | Max requests per window (window algorithms) or capacity (bucket algorithms). |
-| `intervalMs` | `number` | Yes | — | Window size in milliseconds. |
-| `keyPrefix` | `string` | No | — | Optional key namespace. |
-| `failurePolicy` | `"fail-open" \| "fail-closed"` | No | `"fail-closed"` | Behavior when Redis is unavailable. |
-
-**Returns:** Limiter with `.consume(key, cost)` and `.check(key, cost)` methods.
-
-### `createMultiRateLimiter(limiters)`
-
-Composes multiple limiters; all must allow for a request to proceed.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `limiters` | `RateLimiter[]` | Array of independent limiters. |
-
-### `createConcurrencyLimiter(client, options)`
-
-Distributed semaphore for limiting concurrent operations.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `resource` | `string` | Yes | — | Resource name. |
-| `maxConcurrency` | `number` | Yes | — | Max simultaneous permits. |
-| `leaseMs` | `number` | Yes | — | Lease duration (auto-expires). |
-| `timeoutMs` | `number` | No | — | Max wait for a permit. |
-| `retryIntervalMs` | `number` | No | — | Poll interval. |
-
-### `createQuota(client, options)`
-
-Calendar-based quotas (daily, monthly, or custom period).
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `resource` | `string` | Yes | — | Resource name. |
-| `quota` | `number` | Yes | — | Max consumption per period. |
-| `period` | `"daily" \| "monthly" \| "custom"` | Yes | — | Reset period. |
-| `customPeriodMs` | `number` | No | — | Required if `period: "custom"`. |
-| `weight` | `number` | No | `1` | Consumption weight per call. |
-
-### `createBurstProtector(client, options)`
-
-Multi-layer protection combining sustained limit, burst allowance, and optional concurrency.
-
-| Field | Type | Description |
-|---|---|---|
-| `sustainedLimit` | `number` | Long-term requests per window. |
-| `sustainedIntervalMs` | `number` | Sustained window size. |
-| `burstCapacity` | `number` | Short-term burst token capacity. |
-| `burstIntervalMs` | `number` | Burst refill window. |
-| `burstRefillRatePerSecond` | `number` | Burst refill rate. |
-| `concurrencyLimit` | `number` | Optional max concurrent requests. |
-| `concurrencyLeaseMs` | `number` | Lease duration for concurrency permits. |
-
----
-
-## 8. API Reference — Distributed Coordination
-
-### `createCoordinationClient(redis, options)`
-
-Creates a client exposing all coordination primitives.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `redis` | `Redis` | Yes | — | Target client. |
-| `keyPrefix` | `string` | No | — | Key namespace for coordination keys. |
-
-### Primitives
-
-| Primitive | Method | Description |
-|---|---|---|
-| Distributed lock | `.lock(resource)` | Mutex with fencing tokens, TTL, renewal, safe release. |
-| Semaphore | `.semaphore(resource)` | Counting permits with lease expiration. |
-| Lease | `.lease(resource)` | Time-bound ownership with epoch fencing. |
-| Leader election | `.leaderElection(resource)` | Term-based leader acquisition/loss. |
-| Singleton scheduler | `.singletonScheduler(resource)` | One-owner periodic task scheduling. |
-| Job claim | `.jobClaim(jobId)` | At-least-once claim/complete/release. |
-| Barrier | `.barrier(resource)` | Arrive-and-wait synchronization. |
-| Fencing | `.fencing(resource)` | Validate/compare/bump fencing tokens. |
-| Resource lease | `.resourceLease(resource)` | Lease wrapper over arbitrary resources. |
-| Single-flight | `.singleFlight(resource)` | Dedupe concurrent same-key execution. |
-
----
-
-## 9. API Reference — Caching
-
-### `createRedisCache(redis, options)`
-
-Creates a cache with L1 in-process layer and Redis-backed layer.
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `redis` | `Redis` | Yes | — | Target client. |
-| `defaultTtlSeconds` | `number` | No | `300` | Default TTL for entries without explicit TTL. |
-| `localL1` | `object` | No | `{}` | `{ enabled, ttlSeconds, maxEntries, sizePolicy }`. |
-| `writeBehind` | `object` | No | `{}` | `{ enabled, flushIntervalMs }`. |
-| `staleWhileRevalidate` | `boolean` | No | `false` | Serve stale while revalidating. |
-| `negativeTtlSeconds` | `number` | No | — | TTL for cached null results. |
-| `metrics` | `boolean` | No | `false` | Enable cache metrics. |
-
-### Core cache methods
-
-| Method | Description |
-|---|---|
-| `get(key)` | Retrieve a cached value. |
-| `set(key, value, options?)` | Store a value with optional TTL and tags. |
-| `getOrLoad(key, loader, options?)` | Read-through with stampede protection. |
-| `invalidate(key)` | Remove a specific key. |
-| `invalidateTag(tag)` | Remove all entries with a tag. |
-| `shutdown()` | Stop background flush jobs and clear state. |
-
----
-
-## 10. API Reference — Resilience Engine
-
-### `createResilientRedis(client, options)` or `createResilienceEngine(client, options)`
-
-Wraps an ioredis client with outage fallback and recovery.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | `boolean` | `true` | Disable entirely for pass-through mode. |
-| `maxOperations` | `number` | `10000` | Max pending journal entries and local entries. |
-| `maxPayloadBytes` | `number` | `50 MiB` | Max estimated total memory for journal/local store. |
-| `maxOperationBytes` | `number` | `1 MiB` | Max size of a single journaled operation. |
-| `maxRetries` | `number` | `3` | Max replay attempts per operation. |
-| `baseDelayMs` | `number` | `100` | Base retry delay for recovery. |
-| `maxDelayMs` | `number` | `5000` | Cap for retry delay. |
-| `recoveryBatchSize` | `number` | `50` | Max operations per recovery batch. |
-| `conflictPolicy` | `"overwrite" \| "reject" \| "abort"` | `"overwrite"` | Recovery conflict handling. |
-| `logger` | `Logger` | — | Optional logger. |
-
-### Operation outcomes
-
-| Outcome | Meaning |
-|---|---|
-| `EXECUTED` | Command ran now (directly or served locally). |
-| `BUFFERED` | Applied locally and journaled for recovery. |
-| `REJECTED` | Not eligible or capacity exceeded. |
-| `EXPIRED` | Deadline passed before execution/recovery. |
-| `FAILED` | Permanent failure or retry exhaustion. |
-| `AMBIGUOUS` | Redis may have executed but result lost; no blind replay. |
-
-### Supported commands during outage
-
-**Reads:** `get`, `exists`, `ttl`, `hget`, `smembers`
-
-**Writes:** `set`, `setex`, `setnx`, `del`, `expire`, `sadd`, `srem`, `hset`, `hdel`, `getset`
-
-**Never eligible:** `incr`, `incrby`, `decr`, `decrby`, locks, transactions, arbitrary unsupported commands.
-
----
-
-## 11. API Reference — At-Least-Once Jobs
-
-### Enabling jobs
-
-Pass `jobAtLeastOnce` options to `createClient()`:
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `enabled` | `boolean` | Yes | — | Enable job processing. |
-| `queueName` | `string` | No | `"app-jobs"` | BullMQ queue name. |
-| `concurrency` | `number` | No | `5` | Max concurrent jobs. |
-| `attempts` | `number` | No | `3` | Retry attempts. |
-| `backoff` | `object` | No | `{ type: "exponential", delay: 1000 }` | Back-off policy. |
-| `dlq` | `object` | No | — | `{ queueName, preservePayload }` for dead-letter handling. |
-
-### Methods on `client.jobAtLeastOnce`
-
-| Method | Description |
-|---|---|
-| `add(name, data, options?)` | Enqueue a single job. |
-| `addBulk(jobs)` | Enqueue multiple jobs. |
-| `schedule(name, data, repeatOptions)` | Schedule a recurring job. |
-| `createWorker(processor, options?)` | Create a worker to process jobs. |
-| `status()` | Return `{ enabled, queueName, isClosed }`. |
-| `close()` | Gracefully close workers, events, and queues. |
-
----
-
-## 12. API Reference — Auth Stores & Core Helpers
-
-### `createRedisSessionStore(redis, options?)`
-
-Session store with per-user version counters and revoked-session flags.
-
-### `createRedisRefreshStore(redis, options?)`
-
-Refresh token store with TTL and atomic consume.
-
-### `createRedisStateStore(redis, options?)`
-
-Temporary single-use state store with TTL and atomic consume (for OAuth state, password-reset tokens, etc.).
-
-### `createRedisStores(redis, options?)`
-
-Factory returning all three stores above.
-
-### Core helpers
-
-| Helper | Description |
-|---|---|
-| `buildKey(...parts)` | Validated namespace/key builder. Throws on empty segments. |
-| `serialize(value)` / `deserialize(raw)` | JSON codec helpers. |
-| `compareAndSwap(client, key, expected, next, options?)` | Optimistic atomic CAS. |
-| `setIfAbsent(client, key, value, options?)` | Atomic write gate (`SET NX`). |
-| `jitterTtl(baseSeconds, jitter?)` | TTL jitter to prevent stampedes. |
-| `detectCapabilities(client)` | Redis feature/protocol detection. |
-| `createScheduledSessionRevocation(config)` | Queue-backed delayed session revocation via BullMQ. |
-
----
-
-## 13. Parameter Specifications
-
-This section consolidates precise parameter definitions across all APIs.
-
-### Client creation (`createClient`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `url` | `string` | Must be a valid `redis://` URL; throws if missing | `process.env.REDIS_URL` |
-| `lazyConnect` | `boolean` | — | `true` |
-| `maxRetriesPerRequest` | `number \| null` | `null` recommended for BullMQ compatibility | `null` |
-| `lazyConnect: false` | — | Connects eagerly on creation | — |
-
-### Health check (`health`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `timeout` | `number` | Must be > 0; invalid/negative falls back | `1000` ms |
-
-### Shutdown (`shutdown`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `timeout` | `number` | Must be > 0 | `5000` ms |
-
-### Rate limiter (`createRateLimiter`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `limit` | `number` | Must be > 0 | — |
-| `intervalMs` | `number` | Must be > 0 | — |
-| `cost` (consume) | `number` | Finite, positive (> 0) | `1` |
-| `failurePolicy` | `"fail-open" \| "fail-closed"` | — | `"fail-closed"` |
-
-### Concurrency limiter (`createConcurrencyLimiter`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `maxConcurrency` | `number` | Must be ≥ 1 | — |
-| `leaseMs` | `number` | Must be > 0 | — |
-
-### Cache (`createRedisCache`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `defaultTtlSeconds` | `number` | Must be > 0 | `300` |
-| `localL1.maxEntries` | `number` | Must be > 0 | — |
-| `localL1.ttlSeconds` | `number` | Must be > 0 | — |
-
-### Resilience (`createResilienceEngine`)
-
-| Parameter | Type | Constraints | Default |
-|---|---|---|---|
-| `maxOperations` | `number` | Must be > 0 | `10000` |
-| `maxPayloadBytes` | `number` | Must be > 0 | `50 MiB` |
-| `maxOperationBytes` | `number` | Must be > 0 | `1 MiB` |
-| `maxRetries` | `number` | Must be ≥ 0 | `3` |
-| `recoveryBatchSize` | `number` | Must be ≥ 1 | `50` |
-
----
-
-## 14. Usage Examples
-
-### 14.1 Basic client (read/write)
+The foundation of everything. `createClient()` returns a native `ioredis` instance — you get the full ioredis API alongside the safety layer.
 
 ```typescript
 import { createClient, health, shutdown } from "@oneunit/redis";
 
-const redis = createClient({ url: process.env.REDIS_URL });
-
-await health(redis, { timeout: 1000 });
-
-await redis.set("user:1", JSON.stringify({ name: "Alice" }));
-const raw = await redis.get("user:1");
-const user = JSON.parse(raw!);
-
-await shutdown(redis);
-```
-
-### 14.2 Rate-limited API handler
-
-```typescript
-import { createClient, createRateLimiter, shutdown } from "@oneunit/redis";
-
-const redis = createClient({ url: process.env.REDIS_URL });
-const limiter = createRateLimiter(redis, {
-  algorithm: "sliding-window",
-  limit: 100,
-  intervalMs: 60_000,
-  failurePolicy: "fail-open",
+const redis = createClient({
+  url: process.env.REDIS_URL, // falls back to REDIS_URL env var
+  lazyConnect: true,          // (default) connects on first command
 });
 
-async function handleRequest(userId: string) {
-  const result = await limiter.consume(userId, 1);
-  if (!result.allowed) {
-    return { status: 429, retryAfter: result.retryAfterMs };
-  }
-  // proceed with request logic
-  return { status: 200 };
-}
+// Health check with timeout
+const result = await health(redis, { timeout: 2000 });
+// { status: "up", latencyMs: 1 }  or  { status: "down", error: "..." }
 
-await shutdown(redis);
+// Transactions (MULTI/EXEC)
+import { runTransaction } from "@oneunit/redis";
+
+const tx = await runTransaction(redis, [
+  { label: "set-user",    run: (p) => p.set("user:1", "Alice") },
+  { label: "set-session", run: (p) => p.set("session:abc", "1", "EX", 3600) },
+]);
+// tx.executed: true, tx.results: ["OK", "OK"]
+
+// Sentinel (High Availability)
+import { createSentinelClient } from "@oneunit/redis";
+
+const ha = createSentinelClient({
+  sentinels: [{ host: "sentinel1", port: 26379 }],
+  name: "mymaster",
+});
+
+// Cluster
+import { createClusterClient } from "@oneunit/redis";
+
+const cluster = createClusterClient([
+  { host: "node1", port: 7000 },
+  { host: "node2", port: 7001 },
+]);
+
+// Graceful shutdown (safe to call multiple times)
+await shutdown(redis, { timeout: 5000 });
 ```
 
-### 14.3 Distributed lock with fencing
+**Shutdown order** (always do this in your SIGTERM handler):
 
 ```typescript
-import { createClient, createCoordinationClient, shutdown } from "@oneunit/redis";
+process.on("SIGTERM", async () => {
+  await worker.close(true);    // 1. drain workers
+  await queueEvents.close();   // 2. close event listeners
+  await queue.close();         // 3. close queues
+  await shutdown(redis);       // 4. close the client
+  process.exit(0);
+});
+```
+
+---
+
+### Distributed Rate Limiting
+
+Four algorithms. All backed by Lua scripts — atomically safe on a single Redis node.
+
+#### Choose the right algorithm
+
+| Algorithm | Best for | Trade-off |
+|---|---|---|
+| `fixed-window` | Simple throttling, low memory | 2× burst at window boundary |
+| `sliding-window` | Strict per-user limits | Higher memory (sorted set per key) |
+| `token-bucket` | Smooth traffic with burst allowance | More config knobs |
+| `leaky-bucket` | Uniform output rate | Drops excess immediately |
+
+#### Basic per-user limit (sliding window)
+
+```typescript
+import { createClient, createRateLimiter } from "@oneunit/redis";
+
+const redis = createClient({ url: process.env.REDIS_URL });
+
+const limiter = createRateLimiter(redis, {
+  algorithm: "sliding-window",
+  limit: 100,           // 100 requests...
+  intervalMs: 60_000,   // ...per minute
+  keyPrefix: "api",     // namespace for Redis keys
+  failurePolicy: "fail-open",  // allow requests if Redis is down
+});
+
+// In your request handler:
+async function handler(userId: string) {
+  const result = await limiter.consume(userId, 1);  // cost = 1 token
+
+  if (!result.allowed) {
+    return Response.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(result.retryAfterMs! / 1000)) },
+      }
+    );
+  }
+
+  return Response.json({ data: "..." });
+}
+```
+
+#### Peek without consuming
+
+```typescript
+// Check without decrementing the counter
+const peek = await limiter.check(userId, 1);
+console.log(peek.remaining); // tokens left
+```
+
+#### Compose multiple limits (global + per-user)
+
+```typescript
+import { createMultiRateLimiter } from "@oneunit/redis";
+
+const globalLimiter = createRateLimiter(redis, {
+  algorithm: "fixed-window",
+  limit: 10_000,
+  intervalMs: 60_000,
+  keyPrefix: "global",
+});
+
+const perUserLimiter = createRateLimiter(redis, {
+  algorithm: "sliding-window",
+  limit: 50,
+  intervalMs: 60_000,
+  keyPrefix: "user",
+});
+
+// Both must allow → request proceeds
+const multi = createMultiRateLimiter([globalLimiter, perUserLimiter]);
+const { allowed } = await multi.consume(userId, 1);
+```
+
+#### Concurrency limiter (max simultaneous requests)
+
+```typescript
+import { createConcurrencyLimiter } from "@oneunit/redis";
+
+const concurrent = createConcurrencyLimiter(redis, {
+  resource: "db-write",
+  maxConcurrency: 10,  // only 10 requests at once
+  leaseMs: 5000,       // auto-expires if worker crashes
+  timeoutMs: 2000,     // wait up to 2s for a slot
+});
+
+const permit = await concurrent.acquire();
+try {
+  await writeToDatabase();
+} finally {
+  await permit.release();
+}
+```
+
+#### Quota (daily/monthly caps)
+
+```typescript
+import { createQuota } from "@oneunit/redis";
+
+const quota = createQuota(redis, {
+  resource: "api-calls",
+  quota: 10_000,    // 10k calls...
+  period: "daily",  // ...per day (resets at UTC midnight)
+});
+
+const { allowed, remaining } = await quota.consume(userId, 1);
+if (!allowed) return { error: "Daily quota exceeded", remaining: 0 };
+```
+
+#### Burst protection (sustained + spike)
+
+```typescript
+import { createBurstProtector } from "@oneunit/redis";
+
+const burst = createBurstProtector(redis, {
+  resource: "payment-api",
+  sustainedLimit: 100,       // 100 req/min long-term
+  sustainedIntervalMs: 60_000,
+  burstCapacity: 20,         // allow 20-req spikes
+  burstIntervalMs: 1_000,
+  burstRefillRatePerSecond: 5,
+  concurrencyLimit: 50,      // optional: max 50 in-flight
+  concurrencyLeaseMs: 10_000,
+});
+
+const result = await burst.consume(userId);
+```
+
+---
+
+### Distributed Coordination
+
+#### Distributed lock (mutex)
+
+Prevent two instances from running the same critical section simultaneously.
+
+```typescript
+import { createClient, createCoordinationClient } from "@oneunit/redis";
 
 const redis = createClient({ url: process.env.REDIS_URL });
 const coord = createCoordinationClient(redis, { keyPrefix: "myapp:" });
-const lock = coord.lock("inventory:123");
 
-try {
-  await lock.acquire({ ttlMs: 30_000 });
-  // critical section
-  await updateInventory();
-} finally {
-  await lock.release();
+// Option 1: withLock — automatic acquire + release
+const lock = coord.lock("invoice:42");
+
+const { acquired, result } = await lock.withLock(5000, async (handle) => {
+  // handle.fencingToken — pass to downstream systems to detect stale holders
+  // handle.leaseLost()  — check if TTL expired mid-operation
+  await processInvoice(42, handle.fencingToken);
+  return "done";
+});
+
+// Option 2: manual acquire/release
+const acquired = await lock.tryAcquire({ leaseMs: 5000 });
+if (acquired) {
+  try {
+    await criticalSection();
+  } finally {
+    await lock.release();
+  }
 }
-
-await shutdown(redis);
 ```
 
-### 14.4 Cache-aside with stampede protection
+> **In a Redis Cluster**, use hash tags so coordination keys land on the same slot:
+> ```typescript
+> coord.lock("{myapp}:invoice:42");
+> ```
+
+#### Semaphore (N concurrent slots)
 
 ```typescript
-import { createClient, createRedisCache, shutdown } from "@oneunit/redis";
+const sem = coord.semaphore("video-encoder");
+
+const permit = await sem.acquire({ slots: 3, leaseMs: 30_000 }); // 3 concurrent encoders max
+try {
+  await encodeVideo();
+} finally {
+  await permit.release();
+}
+```
+
+#### Leader election
+
+```typescript
+const leader = coord.leaderElection("scheduler-leader");
+
+await leader.campaign({ termMs: 30_000 });
+
+if (await leader.isLeader()) {
+  // Only this instance runs the scheduled task
+  await runCronJob();
+}
+
+leader.on("lost", () => {
+  console.warn("Lost leadership — another instance took over");
+});
+```
+
+#### Single-flight (deduplicate concurrent fetches)
+
+```typescript
+const sf = coord.singleFlight("user-fetch");
+
+// If 50 requests arrive at once for user:42, only ONE hits the DB
+const user = await sf.do("user:42", () => db.users.findById(42));
+```
+
+#### Distributed barrier
+
+```typescript
+const barrier = coord.barrier("batch-job", { count: 3 }); // wait for 3 workers
+
+// In each of your 3 worker processes:
+await barrier.arrive();
+await barrier.wait(); // blocks until all 3 have arrived
+console.log("All workers ready — starting batch");
+```
+
+---
+
+### Caching
+
+Two-layer cache: L1 (in-process `Map`) → L2 (Redis). Stampede protection built-in.
+
+#### Basic read-through cache
+
+```typescript
+import { createClient, createRedisCache } from "@oneunit/redis";
 
 const redis = createClient({ url: process.env.REDIS_URL });
+
+const cache = createRedisCache(redis, {
+  defaultTtlSeconds: 300,       // 5-minute default TTL
+  keyPrefix: "myapp:cache:",
+});
+
+// getOrLoad: returns cached value or calls loader (only once per key)
+const user = await cache.getOrLoad(
+  "user:42",
+  async () => db.users.findById(42), // loader only called on cache miss
+  { ttlSeconds: 600 }
+);
+```
+
+#### L1 in-process cache (sub-millisecond hits)
+
+```typescript
 const cache = createRedisCache(redis, {
   defaultTtlSeconds: 300,
-  localL1: { enabled: true, ttlSeconds: 60, maxEntries: 10_000 },
-  staleWhileRevalidate: true,
+  localL1: {
+    enabled: true,
+    ttlSeconds: 60,          // keep in process memory for 60s
+    sizePolicy: {
+      maxEntries: 10_000,
+      evictionPolicy: "lru", // "lru" | "lfu" | "fifo"
+    },
+  },
+});
+```
+
+#### Stale-while-revalidate (SWR)
+
+```typescript
+const cache = createRedisCache(redis, {
+  defaultTtlSeconds: 300,
+  staleWhileRevalidate: true,  // serve stale instantly, refresh in background
+  swrStaleSeconds: 60,         // serve stale data up to 60s after expiry
 });
 
-const user = await cache.getOrLoad("user:42", async () => {
-  return await db.users.findById(42);
+// First call after TTL: returns stale data immediately, refreshes in background
+// Next call: returns fresh data
+const data = await cache.getOrLoad("dashboard:metrics", fetchMetrics);
+```
+
+#### Tag-based invalidation
+
+Invalidate all entries related to a user (across multiple keys) with one call:
+
+```typescript
+// Set with tags
+await cache.set("user:42:profile", profileData, { tags: ["user:42"] });
+await cache.set("user:42:settings", settingsData, { tags: ["user:42"] });
+await cache.set("user:42:orders", ordersData, { tags: ["user:42"] });
+
+// Invalidate everything tagged "user:42" at once
+await cache.invalidateTag("user:42");
+```
+
+#### Write-behind (async writes)
+
+```typescript
+const cache = createRedisCache(redis, {
+  defaultTtlSeconds: 300,
+  writeBehind: {
+    enabled: true,
+    flushIntervalMs: 1000,  // flush dirty entries to Redis every 1s
+    maxDirtyEntries: 100,
+  },
 });
 
+// set() returns immediately; write to Redis happens asynchronously
+await cache.set("counter:page-views", 9999);
+
+// Always call shutdown to flush remaining dirty entries
+await cache.shutdown();
+```
+
+#### Metrics
+
+```typescript
+const cache = createRedisCache(redis, {
+  defaultTtlSeconds: 300,
+  metrics: true,
+});
+
+// After some operations:
+const stats = cache.metrics();
+// { hits: 42, misses: 8, hitRate: 0.84, l1Hits: 35, l1HitRate: 0.72 }
+```
+
+---
+
+### Job Queues (BullMQ)
+
+#### Create a queue and add jobs
+
+```typescript
+import { createClient, createQueue, addJob, shutdown } from "@oneunit/redis";
+
+const redis = createClient({ url: process.env.REDIS_URL });
+
+const emailQueue = createQueue({
+  name: "emails",
+  connection: redis,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: 100,
+    removeOnFail: 500,
+  },
+});
+
+// Enqueue a single job
+const job = await addJob(emailQueue, "send-welcome", {
+  to: "alice@example.com",
+  template: "welcome",
+});
+
+// Enqueue multiple jobs at once
+import { addBulkJobs } from "@oneunit/redis";
+
+await addBulkJobs(emailQueue, [
+  { name: "send-welcome", data: { to: "bob@example.com" } },
+  { name: "send-welcome", data: { to: "carol@example.com" } },
+]);
+```
+
+#### Create a worker to process jobs
+
+```typescript
+import { createWorker } from "@oneunit/redis";
+
+const worker = createWorker({
+  name: "emails",          // must match queue name
+  connection: redis,
+  concurrency: 5,
+  processor: async (job) => {
+    console.log(`Processing ${job.name}`, job.data);
+    await sendEmail(job.data.to, job.data.template);
+    return { sent: true };
+  },
+});
+
+// Add middleware (logging, tracing, etc.)
+import { createTracingMiddleware } from "@oneunit/redis";
+
+worker.use(createTracingMiddleware({ serviceName: "email-service" }));
+```
+
+#### Schedule recurring jobs (cron)
+
+```typescript
+import { scheduleJob } from "@oneunit/redis";
+
+// Run every day at 9am UTC
+await scheduleJob(
+  emailQueue,
+  "daily-digest",
+  { template: "daily-digest" },
+  { pattern: "0 9 * * *", tz: "UTC" }
+);
+```
+
+#### Dead-letter queue (DLQ)
+
+```typescript
+import { createDlqQueue, getDlqEntries } from "@oneunit/redis";
+
+const dlq = createDlqQueue({
+  queueName: "emails-dlq",
+  connection: redis,
+  preservePayload: true,
+  sanitizeFields: ["password", "token"],  // strip sensitive fields
+});
+
+// Inspect failed jobs
+const failed = await getDlqEntries(dlq, { limit: 10 });
+failed.forEach((entry) => {
+  console.log(entry.jobName, entry.failReason, entry.payload);
+});
+```
+
+#### Listen for queue events
+
+```typescript
+import { attachQueueEvents } from "@oneunit/redis";
+
+const events = attachQueueEvents({
+  queue: emailQueue,
+  connection: redis,
+});
+
+events.on("completed", ({ jobId, returnvalue }) => {
+  console.log(`Job ${jobId} done:`, returnvalue);
+});
+
+events.on("failed", ({ jobId, failedReason }) => {
+  console.error(`Job ${jobId} failed:`, failedReason);
+});
+
+events.on("stalled", ({ jobId }) => {
+  console.warn(`Job ${jobId} stalled`);
+});
+```
+
+---
+
+### At-Least-Once Job Processing
+
+Convenience wrapper that bundles BullMQ queue + worker on a **single shared client**. Ideal for microservices that need reliable job delivery without managing queue/worker instances separately.
+
+```typescript
+import { createClient } from "@oneunit/redis";
+
+const redis = createClient({
+  url: process.env.REDIS_URL,
+  jobAtLeastOnce: {
+    enabled: true,
+    queueName: "app-jobs",
+    concurrency: 10,
+    attempts: 5,
+    backoff: { type: "exponential", delay: 1000 },
+    dlq: {
+      queueName: "app-jobs-dlq",
+      preservePayload: true,
+      sanitizeFields: ["password", "secret"],
+    },
+  },
+});
+
+// Register your processors
+const worker = redis.jobAtLeastOnce.createWorker(async (job) => {
+  switch (job.name) {
+    case "send-email": await sendEmail(job.data); break;
+    case "resize-image": await resizeImage(job.data); break;
+  }
+  return { success: true };
+});
+
+// Enqueue jobs from anywhere that has access to `redis`
+await redis.jobAtLeastOnce.add("send-email", { to: "alice@example.com" });
+await redis.jobAtLeastOnce.add("resize-image", { imageId: "img_123" });
+
+// Schedule a recurring job
+await redis.jobAtLeastOnce.schedule(
+  "cleanup",
+  { olderThanDays: 30 },
+  { pattern: "0 2 * * *" } // 2am daily
+);
+
+// Shut down (closes worker + queue)
+await redis.jobAtLeastOnce.close();
 await shutdown(redis);
 ```
 
-### 14.5 Transparent outage fallback (resilience)
+---
+
+### Pipeline Batching
+
+Execute multiple Redis commands in one round-trip with bounded timeout and per-command error reporting.
+
+```typescript
+import { createClient, runPipeline, pipelineValues } from "@oneunit/redis";
+
+const redis = createClient({ url: process.env.REDIS_URL });
+
+const results = await runPipeline(redis, [
+  { label: "get-user",    run: (p) => p.get("user:1") },
+  { label: "get-session", run: (p) => p.get("session:abc") },
+  { label: "get-config",  run: (p) => p.hgetall("config:app") },
+], { timeout: 3000 });
+
+// A failed step does NOT abort the whole batch
+const [user, session, config] = pipelineValues(results);
+```
+
+---
+
+### Resilience Engine
+
+Keep your app alive during Redis outages. The engine buffers writes locally and replays them when Redis recovers.
 
 ```typescript
 import { createClient } from "@oneunit/redis";
@@ -689,47 +746,199 @@ import { createClient } from "@oneunit/redis";
 const redis = createClient({
   url: process.env.REDIS_URL,
   resilience: {
-    fallback: { enabled: true },
-    recovery: { enabled: true, autoRecover: true },
+    fallback: {
+      enabled: true,
+      maxOperations: 5000,      // buffer up to 5k ops during outage
+      maxPayloadBytes: 10_000_000, // 10 MiB max buffer
+    },
+    recovery: {
+      enabled: true,
+      autoRecover: true,        // replay automatically when Redis reconnects
+      recoveryBatchSize: 100,
+    },
   },
 });
 
-// During an outage, eligible reads are served locally; writes are journaled
-await redis.set("session:abc", { userId: 1 });
-const session = await redis.get("session:abc");
+// During a Redis outage:
+await redis.set("session:abc", "data");  // → BUFFERED locally, not lost
+const val = await redis.get("session:abc"); // → served from local store
+
+// When Redis comes back → all buffered writes are replayed automatically
 ```
 
-### 14.6 At-least-once job processing
+**Supported operations during outage:**
+
+| Category | Commands |
+|---|---|
+| **Reads** (served from local store) | `get`, `exists`, `ttl`, `hget`, `smembers` |
+| **Writes** (buffered for replay) | `set`, `setex`, `setnx`, `del`, `expire`, `sadd`, `srem`, `hset`, `hdel`, `getset` |
+| **Never buffered** | `incr`/`decr`, locks, transactions, Lua scripts |
+
+**Operation outcomes:**
+
+| Outcome | Meaning |
+|---|---|
+| `EXECUTED` | Ran against Redis normally |
+| `BUFFERED` | Stored locally, will replay on recovery |
+| `REJECTED` | Buffer full or operation not eligible |
+| `AMBIGUOUS` | May have executed — handle at application layer |
+| `EXPIRED` | Deadline passed before execution |
+| `FAILED` | Permanent failure after max retries |
+
+> ⚠️ **Important:** Resilience is process-local — each instance maintains its own buffer. It is not a substitute for Redis replication or cross-instance coordination.
+
+---
+
+### Auth Stores
+
+Ready-made session, refresh-token, and state stores for authentication flows.
 
 ```typescript
-import { createClient } from "@oneunit/redis";
+import { createClient, createRedisStores } from "@oneunit/redis";
 
-const jobClient = createClient({
-  url: process.env.REDIS_URL,
-  jobAtLeastOnce: {
-    enabled: true,
-    queueName: "app-jobs",
-    concurrency: 10,
-    attempts: 5,
-    backoff: { type: "exponential", delay: 2000 },
-  },
+const redis = createClient({ url: process.env.REDIS_URL });
+
+const { session, refresh, state } = createRedisStores(redis, {
+  keyPrefix: "myapp:auth:",
 });
 
-const worker = jobClient.jobAtLeastOnce.createWorker(async (job) => {
-  await doWork(job.data);
-  return { success: true };
+// — Session store —
+// Track per-user session version (bump = invalidate all existing JWTs)
+const version = await session.bumpVersion(userId);
+await session.revokeSession(sessionId);
+const isRevoked = await session.isSessionRevoked(sessionId);
+
+// — Refresh token store —
+await refresh.save({
+  id: "token_xyz",
+  userId: 42,
+  tokenHash: hash(refreshToken),
+  expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
 });
 
-await jobClient.jobAtLeastOnce.add("send-email", { to: "user@example.com" });
+// Atomic consume: get + delete in one operation (prevents double-use)
+const record = await refresh.consume("token_xyz");
+
+// — State store (OAuth state, password-reset tokens, magic links) —
+await state.set("oauth_state_abc", { redirectUrl: "/dashboard" }, 300); // 5 min TTL
+const oauthState = await state.consume("oauth_state_abc"); // get + delete atomically
 ```
 
-### 14.7 Graceful shutdown ordering
+---
+
+### Error Handling & Security
 
 ```typescript
+import { redactError, classifyError, isRetryable } from "@oneunit/redis";
+
+try {
+  await redis.set("key", "value");
+} catch (err) {
+  // Strip passwords/tokens before logging
+  const safe = redactError(err);
+  logger.error("Redis error", { error: safe.message });
+
+  // Classify the error
+  const { type, retryable } = classifyError(err);
+  // type: "connection" | "timeout" | "command" | "auth" | "unknown"
+
+  if (isRetryable(err)) {
+    // schedule a retry
+  }
+}
+```
+
+---
+
+## 🔌 Complete Example
+
+A realistic Express API with rate limiting, caching, and a job queue — all sharing one Redis client.
+
+```typescript
+import express from "express";
+import {
+  createClient,
+  createRateLimiter,
+  createRedisCache,
+  createQueue,
+  createWorker,
+  addJob,
+  health,
+  shutdown,
+} from "@oneunit/redis";
+
+const redis = createClient({ url: process.env.REDIS_URL });
+
+// Rate limiter: 60 requests per minute per IP
+const limiter = createRateLimiter(redis, {
+  algorithm: "sliding-window",
+  limit: 60,
+  intervalMs: 60_000,
+  keyPrefix: "api:rate",
+});
+
+// Cache with L1 layer
+const cache = createRedisCache(redis, {
+  defaultTtlSeconds: 300,
+  localL1: { enabled: true, ttlSeconds: 30 },
+  staleWhileRevalidate: true,
+});
+
+// Background job queue
+const emailQueue = createQueue({ name: "emails", connection: redis });
+const emailWorker = createWorker({
+  name: "emails",
+  connection: redis,
+  concurrency: 5,
+  processor: async (job) => sendEmail(job.data),
+});
+
+const app = express();
+
+// Rate limiting middleware
+app.use(async (req, res, next) => {
+  const { allowed, retryAfterMs } = await limiter.consume(req.ip, 1);
+  if (!allowed) {
+    return res.status(429).json({
+      error: "Too many requests",
+      retryAfter: Math.ceil(retryAfterMs! / 1000),
+    });
+  }
+  next();
+});
+
+// Cached endpoint
+app.get("/users/:id", async (req, res) => {
+  const user = await cache.getOrLoad(
+    `user:${req.params.id}`,
+    () => db.users.findById(req.params.id)
+  );
+  res.json(user);
+});
+
+// Enqueue a job
+app.post("/users/:id/welcome-email", async (req, res) => {
+  await addJob(emailQueue, "send-welcome", {
+    userId: req.params.id,
+    to: req.body.email,
+  });
+  res.json({ queued: true });
+});
+
+// Health endpoint
+app.get("/health", async (req, res) => {
+  const result = await health(redis);
+  res.status(result.status === "up" ? 200 : 503).json(result);
+});
+
+const server = app.listen(3000);
+
+// Graceful shutdown
 process.on("SIGTERM", async () => {
-  await worker.close(true);
-  await queueEvents.close();
-  await queue.close();
+  server.close();
+  await emailWorker.close(true);  // drain jobs
+  await emailQueue.close();
+  await cache.shutdown();
   await shutdown(redis);
   process.exit(0);
 });
@@ -737,155 +946,366 @@ process.on("SIGTERM", async () => {
 
 ---
 
-## 15. Troubleshooting & FAQ
+## 📚 API Reference
 
-### Q1: `createClient` throws "No Redis URL provided"
+### `createClient(urlOrOptions, logger?)`
 
-**Cause:** No `url` argument and `REDIS_URL` environment variable is missing.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | `string` | `process.env.REDIS_URL` | Redis URL (`redis://...` or `rediss://...` for TLS) |
+| `lazyConnect` | `boolean` | `true` | Defer TCP connection until first command |
+| `maxRetriesPerRequest` | `number \| null` | `null` | Per-request retries. `null` = BullMQ-compatible |
+| `resilience` | `ResilientRedisOptions` | — | Enable outage fallback/recovery |
+| `jobAtLeastOnce` | `boolean \| JobAtLeastOnceOptions` | `false` | Enable at-least-once job processing |
+| `logger` | `Logger` | no-op | `{ error, warn, info, debug }` compatible logger |
 
-**Fix:** Set `REDIS_URL` or pass `url` explicitly:
+**Returns:** `Redis` (ioredis instance) or `Redis & ResilientRedisFacade` if resilience is enabled.
 
+---
+
+### `health(client, options?)`
+
+```typescript
+const { status, latencyMs, error } = await health(redis, { timeout: 1000 });
+// status: "up" | "down"
+```
+
+---
+
+### `shutdown(client, options?)`
+
+Idempotent — safe to call multiple times. Sends `QUIT`, waits up to `timeout` ms, then forces disconnect.
+
+```typescript
+await shutdown(redis, { timeout: 5000 });
+```
+
+---
+
+### `createRateLimiter(redis, options)`
+
+| Field | Type | Description |
+|---|---|---|
+| `algorithm` | `"fixed-window" \| "sliding-window" \| "token-bucket" \| "leaky-bucket"` | Limiting algorithm |
+| `limit` | `number` | Max requests per interval (or bucket capacity) |
+| `intervalMs` | `number` | Window duration in ms |
+| `keyPrefix` | `string` | Redis key namespace |
+| `failurePolicy` | `"fail-open" \| "fail-closed"` | Behavior when Redis is unreachable. Default: `"fail-closed"` |
+
+**Instance methods:**
+- `limiter.consume(key, cost?)` → `{ allowed, remaining, retryAfterMs }`
+- `limiter.check(key, cost?)` → peek without consuming
+
+---
+
+### `createCoordinationClient(redis, options?)`
+
+| Field | Type | Description |
+|---|---|---|
+| `keyPrefix` | `string` | Namespace all coordination keys |
+
+**Returns a client with:**
+
+| Method | Returns | Description |
+|---|---|---|
+| `.lock(resource)` | `LockManager` | Distributed mutex |
+| `.semaphore(resource)` | `SemaphoreManager` | N-slot counting semaphore |
+| `.leaderElection(resource)` | `LeaderElection` | Term-based leadership |
+| `.singletonScheduler(resource)` | `SingletonScheduler` | One-owner periodic task |
+| `.jobClaim(jobId)` | `JobClaim` | At-least-once claim/complete/release |
+| `.barrier(resource, options)` | `Barrier` | Arrive-and-wait synchronization |
+| `.fencing(resource)` | `FencingManager` | Monotonic token management |
+| `.singleFlight(resource)` | `SingleFlight` | Deduplicate concurrent executions |
+
+---
+
+### `createRedisCache(redis, options?)`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `defaultTtlSeconds` | `number` | `300` | Default TTL for cache entries |
+| `keyPrefix` | `string` | `"oneunit:cache:"` | Redis key prefix |
+| `localL1.enabled` | `boolean` | `false` | Enable in-process cache layer |
+| `localL1.ttlSeconds` | `number` | `60` | L1 TTL |
+| `localL1.sizePolicy.maxEntries` | `number` | `10000` | Max L1 entries |
+| `localL1.sizePolicy.evictionPolicy` | `"lru" \| "lfu" \| "fifo"` | `"lru"` | L1 eviction |
+| `writeBehind.enabled` | `boolean` | `false` | Enable async writes |
+| `writeBehind.flushIntervalMs` | `number` | `1000` | Flush interval |
+| `staleWhileRevalidate` | `boolean` | `false` | SWR mode |
+| `negativeTtlSeconds` | `number` | — | Cache `null` results for this long |
+| `metrics` | `boolean` | `false` | Track hit/miss stats |
+
+**Instance methods:**
+- `cache.get(key)` → `T | null`
+- `cache.set(key, value, options?)` → stores with optional TTL and tags
+- `cache.getOrLoad(key, loader, options?)` → read-through with stampede protection
+- `cache.invalidate(key)` → remove single entry
+- `cache.invalidateTag(tag)` → remove all entries with this tag
+- `cache.metrics()` → `CacheMetrics`
+- `cache.shutdown()` → flush write-behind buffer
+
+---
+
+### `createQueue(config)` / `createWorker(config)`
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Queue/worker name (must match between queue and worker) |
+| `connection` | `Redis` | Shared ioredis client |
+| `prefix` | `string` | Redis key prefix. Default: `"queue"` |
+| `defaultJobOptions` | `JobsOptions` | Retry/backoff/retention defaults |
+| `concurrency` | `number` | (Worker only) Max concurrent jobs |
+| `middleware` | `JobMiddleware[]` | (Worker only) Middleware chain |
+
+---
+
+### `createResilientRedis(client, options)`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `boolean` | `true` | Disable for pass-through |
+| `maxOperations` | `number` | `10000` | Max journal entries during outage |
+| `maxPayloadBytes` | `number` | `52_428_800` (50 MiB) | Max buffer memory |
+| `maxRetries` | `number` | `3` | Max recovery replay attempts |
+| `conflictPolicy` | `"overwrite" \| "reject" \| "abort"` | `"overwrite"` | Recovery conflict resolution |
+| `autoRecover` | `boolean` | `false` | Replay buffer when Redis reconnects |
+
+---
+
+### Core Helpers
+
+```typescript
+import { buildKey, serialize, deserialize, compareAndSwap, setIfAbsent, jitterTtl } from "@oneunit/redis";
+
+// Safe key builder — throws on empty segments
+const key = buildKey("user", userId, "settings");   // "user:42:settings"
+
+// JSON codec
+const encoded = serialize({ name: "Alice" });       // string
+const decoded = deserialize<User>(encoded);          // User object
+
+// Optimistic CAS (compare-and-swap)
+const success = await compareAndSwap(redis, "config:version", "v1", "v2");
+
+// Atomic write gate (SET NX)
+const written = await setIfAbsent(redis, "lock:key", "owner", { ttlSeconds: 30 });
+
+// TTL jitter (prevent cache stampede)
+const ttl = jitterTtl(300, 0.1);  // 300s ± 10% random jitter
+```
+
+---
+
+## 🏆 Best Practices
+
+### Connection
+
+```typescript
+// ✅ One client, shared everywhere
+const redis = createClient({ url: process.env.REDIS_URL });
+const limiter = createRateLimiter(redis, { ... });
+const cache   = createRedisCache(redis, { ... });
+const queue   = createQueue({ name: "jobs", connection: redis });
+
+// ❌ Don't create a new client per feature
+const redisForCache = createClient({ url: ... });
+const redisForQueue = createClient({ url: ... });
+```
+
+### Shutdown
+
+```typescript
+// ✅ Always implement SIGTERM handling in correct order
+process.on("SIGTERM", async () => {
+  await worker.close(true);    // 1. drain workers first
+  await queueEvents.close();   // 2. then event listeners
+  await queue.close();         // 3. then queues
+  await cache.shutdown();      // 4. flush write-behind
+  await shutdown(redis);       // 5. close client last
+  process.exit(0);
+});
+```
+
+### Security
+
+```typescript
+// ✅ Credentials via env var
+const redis = createClient({ url: process.env.REDIS_URL });
+
+// ✅ Redact before logging
+logger.error("Redis failed", { error: redactError(err).message });
+
+// ✅ TLS in production
+const redis = createClient({ url: "rediss://host:6380" }); // rediss:// = TLS
+
+// ❌ Never hardcode credentials
+const redis = createClient({ url: "redis://:mypassword@host:6379" }); // hardcoded!
+```
+
+### Rate Limiting
+
+| Scenario | Recommendation |
+|---|---|
+| Public API (strict per-user) | `sliding-window` |
+| Internal service (simple) | `fixed-window` |
+| Variable-cost operations | `token-bucket` with cost parameter |
+| Uniform output rate required | `leaky-bucket` |
+| Multi-tier limits needed | `createMultiRateLimiter` |
+| Strict in-flight cap | `createConcurrencyLimiter` |
+| Calendar-based budget | `createQuota` |
+
+### Caching
+
+- **Enable L1** (`localL1.enabled: true`) for hot read paths — reduces Redis round-trips to zero
+- **Use tag invalidation** instead of `invalidate(key)` per-entry when you need group invalidation
+- **Enable SWR** for read-heavy data that can be slightly stale (dashboards, catalogs)
+- **Set `negativeTtlSeconds`** to cache "not found" results and prevent repeated DB lookups
+
+### Queues
+
+- Set `removeOnComplete: 100` and `removeOnFail: 500` to prevent unbounded job growth
+- Match `concurrency` to downstream capacity, not CPU core count
+- Always configure a DLQ for jobs that need manual inspection after all retries
+- Use `scheduleJob` for recurring work instead of an external cron
+
+---
+
+## 🐛 Troubleshooting
+
+### `Error: No Redis URL provided`
+
+**Cause:** `REDIS_URL` env var is not set and no `url` was passed.
+
+```bash
+export REDIS_URL="redis://127.0.0.1:6379"
+```
+
+or:
 ```typescript
 const redis = createClient({ url: "redis://127.0.0.1:6379" });
 ```
 
-### Q2: `ECONNREFUSED` when connecting
+---
 
-**Cause:** Redis is not running at the configured host/port.
+### `ECONNREFUSED`
 
-**Fix:** Start Redis (`docker run -d -p 6379:6379 redis:alpine`) or correct `REDIS_URL`. Use `health()` to verify reachability before relying on the client.
+**Cause:** Redis is not running at the configured address.
 
-### Q3: `CROSSSLOT` error in Redis Cluster
+```bash
+# Start Redis locally
+docker run -d -p 6379:6379 redis:alpine
 
-**Cause:** Coordination/rate-limit keys span multiple hash slots.
-
-**Fix:** Use `{resource}` hash tags so related keys land on the same slot:
-
-```typescript
-const lock = coord.lock("{my-resource}:inventory:123");
+# Verify it's up
+redis-cli ping  # → PONG
 ```
 
-### Q4: `"Connection is closed."` unhandled rejection
+---
 
-**Cause:** BullMQ duplicates the ioredis client internally; a duplicate connection's handshake races with `disconnect()`.
+### Worker not processing jobs
 
-**Fix:** The package patches `Redis.prototype.connect` automatically to absorb this benign rejection. Ensure you are using the latest version. If you see this with older code, upgrade `@oneunit/redis`.
-
-### Q5: Worker not processing jobs
-
-**Cause:** Worker name does not match queue name, or `concurrency` is not set, or the worker was never started.
-
-**Fix:** Verify `name` matches between `createQueue` and `createWorker`, and call `worker.run()` or ensure the worker starts automatically. Check BullMQ worker events (`failed`, `completed`).
-
-### Q6: `keyPrefix` is incompatible with BullMQ
-
-**Cause:** `createClient({ keyPrefix: "app:" })` throws.
-
-**Fix:** Do not set `keyPrefix` on the client. Use the `prefix` option on queues/workers/coordination instead.
-
-### Q7: Resilience engine buffers but never recovers
-
-**Cause:** Redis came back but recovery was not triggered or `autoRecover` is disabled.
-
-**Fix:** Call `engine.recover()` manually, or enable `recovery: { autoRecover: true }` when creating the resilient client.
-
-### Q8: At-least-once jobs are inactive / throw "disabled"
-
-**Cause:** `jobAtLeastOnce.enabled` is `false` or not set.
-
-**Fix:** Pass `jobAtLeastOnce: { enabled: true, ... }` to `createClient()`.
+1. Verify `name` is identical between `createQueue` and `createWorker`
+2. Verify `prefix` matches between queue and worker
+3. Check `worker.isRunning()` returns `true`
+4. Listen to worker events: `worker.on("failed", (job, err) => console.error(err))`
 
 ---
 
-## 16. Optimization & Best Practices
+### `CROSSSLOT` error in Redis Cluster
 
-### Connection management
+Coordination keys span multiple hash slots. Use hash tags:
 
-- **Use `lazyConnect: true`** (default) to defer connection until first command — reduces cold-start latency.
-- **Share one client** across queues, workers, rate limiters, and coordination primitives instead of creating multiple connections.
-- **Set `maxRetriesPerRequest: null`** when sharing a client with BullMQ workers to avoid unbounded reconnect loops.
+```typescript
+// ✅ Hash tag forces all keys for this resource onto the same slot
+coord.lock("{myapp:invoice:42}:lock");
 
-### Shutdown
-
-- **Always implement graceful shutdown** in order: workers → QueueEvents → queues → client.
-- **Call `shutdown()`** in your `SIGTERM`/`SIGINT` handler; it is idempotent and bounded (5 s default).
-- **Never create clients at module top-level** without a corresponding shutdown path.
-
-### Rate limiting
-
-- **Prefer sliding-window** for strict limits without boundary bursts, but be aware of higher memory usage (sorted set per key).
-- **Use fixed-window** for simple, low-overhead throttling — accept the 2× burst at boundaries.
-- **Enable fail-open** only if graceful degradation is acceptable; fail-closed is safer for strict protection.
-- **Compose limiters** with `createMultiRateLimiter` for per-user + global limits instead of manual logic.
-
-### Caching
-
-- **Enable L1 cache** (`localL1.enabled`) for frequently read keys — sub-millisecond hits.
-- **Use tag invalidation** (`invalidateTag`) instead of scanning keys when invalidating related entries.
-- **Set `staleWhileRevalidate: true`** for read-heavy workloads where slightly stale data is acceptable.
-- **Enable metrics** (`metrics: true`) to monitor hit rates and tune TTL/size policies.
-
-### Resilience
-
-- **Only enable resilience for workloads that can tolerate eventual consistency** — the engine is process-local and not crash-durable.
-- **Set `maxOperations`** based on expected outage duration × write rate to avoid memory pressure.
-- **Handle `AMBIGUOUS` outcomes** explicitly at the application layer — re-read authoritative state or apply idempotency keys.
-- **Do not rely on resilience for cross-instance coordination** — each instance maintains its own buffer.
-
-### Jobs / queues
-
-- **Set `concurrency`** based on your downstream capacity, not just CPU cores.
-- **Use DLQ** (`dlq: { queueName, preservePayload }`) for failed jobs that need manual inspection.
-- **Set retention** (`removeOnComplete`, `removeOnFail`) to prevent unbounded job growth.
-- **Use `scheduleJob`** for recurring work instead of manual cron + enqueue.
-
-### Security
-
-- **Never hard-code credentials** — inject `REDIS_URL` via environment variables or secrets.
-- **Do not log raw errors** — use `redactError()` before logging any Redis error.
-- **Use TLS** for live connections (pass-through to ioredis options).
-
-### Testing
-
-- **Run integration tests against a real Redis instance** — never mock the connection in a way that hides timeout/backpressure behavior.
-- **Never silently skip tests** when Redis is unavailable — configure your CI to start an ephemeral Redis container.
+// ❌ No hash tag — may cross slots
+coord.lock("invoice:42");
+```
 
 ---
 
-## 17. Glossary
+### `"Connection is closed."` unhandled rejection
+
+This is a benign BullMQ behavior. The package patches `Redis.prototype.connect` to absorb it. Ensure you are on the latest version of `@oneunit/redis`.
+
+---
+
+### Resilience buffers but never replays
+
+Enable `autoRecover` or trigger manually:
+
+```typescript
+// Auto-replay when Redis reconnects
+const redis = createClient({
+  url: process.env.REDIS_URL,
+  resilience: {
+    recovery: { enabled: true, autoRecover: true },
+  },
+});
+
+// Or trigger manually
+await redis.recover();
+```
+
+---
+
+### `keyPrefix` throws on createClient
+
+ioredis's `keyPrefix` option is incompatible with BullMQ. Use the `prefix` option on queues/workers/coordination instead — never on the client itself.
+
+```typescript
+// ❌ Breaks BullMQ
+createClient({ url: "...", keyPrefix: "app:" });
+
+// ✅ Set prefix per feature
+createQueue({ name: "jobs", connection: redis, prefix: "app" });
+createCoordinationClient(redis, { keyPrefix: "app:" });
+```
+
+---
+
+## 📂 Documentation Index
+
+| Document | Contents |
+|---|---|
+| **README.md** | This file — getting started, usage guides, API reference |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design principles, structural diagrams, ownership contracts |
+| [docs/client/README.md](docs/client/README.md) | Full client API — `createClient`, health, shutdown, transactions |
+| [docs/queue/README.md](docs/queue/README.md) | BullMQ factories, job lifecycle, DLQ, flow producer |
+| [docs/pipeline/README.md](docs/pipeline/README.md) | Pipeline batching |
+| [docs/rate-limit/README.md](docs/rate-limit/README.md) | Rate limiting algorithms in depth |
+| [docs/coordination/README.md](docs/coordination/README.md) | Locks, semaphores, leader election, barriers |
+| [docs/cache/README.md](docs/cache/README.md) | L1/L2 cache, write-behind, SWR, tag invalidation |
+| [docs/resilience/README.md](docs/resilience/README.md) | Resilience engine — outage fallback, recovery |
+| [docs/features/README.md](docs/features/README.md) | Auth stores — session, refresh-token, state |
+| [docs/jobs/README.md](docs/jobs/README.md) | At-least-once job processing |
+
+---
+
+## 💬 Glossary
 
 | Term | Definition |
 |---|---|
-| **machism** | Codename for `@oneunit/redis` — the integration layer over ioredis and BullMQ. |
-| **Subpath import** | Importing from `@oneunit/redis/client`, `@oneunit/redis/rate-limit`, etc., to load only needed code. |
-| **Lazy connect** | Deferring the TCP connection until the first Redis command. |
-| **L1 cache** | In-process, in-memory cache layer sitting in front of Redis. |
-| **Write-behind** | Writing to the local store immediately and flushing to Redis asynchronously. |
-| **Stale-while-revalidate** | Serving a stale cached value while asynchronously fetching fresh data. |
-| **At-least-once** | Job processing guarantee that a job is processed at least once (duplicates possible). |
-| **Fencing token** | Monotonically increasing token used to detect stale lock holders. |
-| **AMBIGUOUS** | Resilience outcome indicating a command may have executed but the result was lost. |
+| **L1 cache** | In-process, in-memory cache (sub-ms) sitting in front of Redis |
+| **Write-behind** | Write to local store immediately, flush to Redis asynchronously |
+| **Stale-while-revalidate (SWR)** | Serve stale data instantly while refreshing in the background |
+| **Fencing token** | Monotonically increasing number to detect stale lock holders |
+| **At-least-once** | Delivery guarantee: a job is processed ≥ once (duplicates possible) |
+| **AMBIGUOUS** | Resilience outcome: Redis may have executed — do not blind-replay |
+| **Lazy connect** | TCP connection deferred until the first Redis command |
+| **Subpath import** | `@oneunit/redis/cache` loads only the cache module, not the whole package |
+| **Stampede protection** | Ensuring only one loader runs for a cache key even under concurrent misses |
 
 ---
 
-## 18. Documentation Index
+## 📄 License
 
-| Document | Purpose |
-|---|---|
-| **README.md** | Complete user manual (this file). |
-| **[Architecture](docs/ARCHITECTURE.md)** | Design principles, core logic, structural diagrams, ownership contracts, deployment scenarios. |
-| **[Client API](docs/client/README.md)** | `createClient`, health checks, shutdown, transactions, Sentinel/Cluster. |
-| **[Queues & Workers](docs/queue/README.md)** | BullMQ factories, job lifecycle, DLQ, events. |
-| **[Pipeline](docs/pipeline/README.md)** | Bounded pipeline batching. |
-| **[Rate Limiting](docs/rate-limit/README.md)** | Algorithms, quotas, concurrency, burst protection. |
-| **[Coordination](docs/coordination/README.md)** | Locks, semaphores, leader election, barriers. |
-| **[Cache](docs/cache/README.md)** | L1 cache, write-behind, SWR, tag invalidation. |
-| **[Resilience](docs/resilience/README.md)** | Outage fallback, recovery, local store. |
-| **[Features & Auth Stores](docs/features/README.md)** | Session, refresh-token, state stores, scheduled revocation. |
-| **[Jobs](docs/jobs/README.md)** | At-least-once processing. |
+MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
-## 19. License
-
-MIT License — see [LICENSE](LICENSE) for details.
+<p align="center">
+  Built with ❤️ by <a href="https://github.com/oneunitjs">oneunitjs</a> ·
+  <a href="https://github.com/oneunitjs/redis">GitHub</a> ·
+  <a href="https://github.com/oneunitjs/redis/issues">Issues</a>
+</p>
